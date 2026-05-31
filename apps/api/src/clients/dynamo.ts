@@ -81,6 +81,29 @@ const taskRecordRawSchema = z.object({
 
 export type TaskRecord = z.infer<typeof taskRecordSchema>;
 
+const taskLevelProjectionSchema = z.object({
+  level: z.number().int().nonnegative(),
+  status: z.enum(['QUEUED', 'IN_PROGRESS', 'DONE', 'FAILED'])
+});
+
+export type TaskLevelCounts = {
+  readonly level: number;
+  readonly queued: number;
+  readonly inProgress: number;
+  readonly done: number;
+  readonly failed: number;
+  readonly total: number;
+};
+
+export type TaskLevelSummary = {
+  readonly queued: number;
+  readonly inProgress: number;
+  readonly done: number;
+  readonly failed: number;
+  readonly total: number;
+  readonly byLevel: TaskLevelCounts[];
+};
+
 export type RunningJobCounters = {
   readonly chunkSizeUsed: number;
   readonly leafTasksTotal: number;
@@ -112,6 +135,7 @@ export interface DynamoPort {
     inputKind: 'file' | 'partial';
   }): Promise<void>;
   listTasksForJob(jobId: string, limit?: number): Promise<TaskRecord[]>;
+  countTaskLevels(jobId: string): Promise<TaskLevelSummary>;
   hasRunningJobs(): Promise<boolean>;
   getFleet(): Promise<FleetRecord>;
   setFleetInFlight(inFlight: number): Promise<FleetRecord>;
@@ -430,6 +454,72 @@ export class DynamoStore implements DynamoPort {
     );
     const rawRecords = z.array(taskRecordRawSchema).parse(output.Items ?? []);
     return rawRecords.map((rawRecord) => this.sanitizeTaskRecord(rawRecord));
+  }
+
+  // Aggregates per-level/per-status task counts across ALL tasks for a job by
+  // paginating the query (no row cap), so the level breakdown reflects the full
+  // merge history rather than a truncated subset.
+  public async countTaskLevels(jobId: string): Promise<TaskLevelSummary> {
+    const levelMap = new Map<
+      number,
+      { queued: number; inProgress: number; done: number; failed: number }
+    >();
+    let queued = 0;
+    let inProgress = 0;
+    let done = 0;
+    let failed = 0;
+    let total = 0;
+    let exclusiveStartKey: Record<string, unknown> | undefined;
+    do {
+      const output = await this.docClient.send(
+        new QueryCommand({
+          TableName: this.config.tasksTableName,
+          KeyConditionExpression: 'jobId = :jobId',
+          ProjectionExpression: '#level, #status',
+          ExpressionAttributeNames: { '#level': 'level', '#status': 'status' },
+          ExpressionAttributeValues: { ':jobId': jobId },
+          ...(exclusiveStartKey !== undefined ? { ExclusiveStartKey: exclusiveStartKey } : {})
+        })
+      );
+      for (const item of output.Items ?? []) {
+        const parsed = taskLevelProjectionSchema.parse(item);
+        total += 1;
+        const bucket = levelMap.get(parsed.level) ?? {
+          queued: 0,
+          inProgress: 0,
+          done: 0,
+          failed: 0
+        };
+        if (parsed.status === 'QUEUED') {
+          queued += 1;
+          bucket.queued += 1;
+        } else if (parsed.status === 'IN_PROGRESS') {
+          inProgress += 1;
+          bucket.inProgress += 1;
+        } else if (parsed.status === 'DONE') {
+          done += 1;
+          bucket.done += 1;
+        } else {
+          failed += 1;
+          bucket.failed += 1;
+        }
+        levelMap.set(parsed.level, bucket);
+      }
+      exclusiveStartKey = output.LastEvaluatedKey as Record<string, unknown> | undefined;
+    } while (exclusiveStartKey !== undefined);
+
+    const byLevel = Array.from(levelMap.entries())
+      .sort((left, right) => left[0] - right[0])
+      .map(([level, counts]) => ({
+        level,
+        queued: counts.queued,
+        inProgress: counts.inProgress,
+        done: counts.done,
+        failed: counts.failed,
+        total: counts.queued + counts.inProgress + counts.done + counts.failed
+      }));
+
+    return { queued, inProgress, done, failed, total, byLevel };
   }
 
   public async hasRunningJobs(): Promise<boolean> {

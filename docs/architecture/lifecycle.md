@@ -155,12 +155,11 @@ The API derives a human-readable progress view from the same state, no extra boo
 | `resultUrl` | `Jobs.resultKey` (presigned) once `COMPLETE` | — |
 | `chunkSizeUsed` / `leafTasksTotal` / `leafTasksDone` | `Jobs.*` snapshot counters | `5 / 3 / 2` |
 | `readyCount` / `claimedCount` | `Jobs.*` ready-pool counters | `7 / 5` |
-| `taskSummary` | aggregated counts from a `Tasks` query, including a per-`level` breakdown (`byLevel`) | `{ done: 4, byLevel: [...] }` |
-| `taskDetails` | per-task lineage from `Tasks` (taskId, kind, level, status, inputKeys, partialKey) — bounded by a server limit, with `taskDetailsTruncated`/`taskDetailsLimit` flags | for the job-detail processing map |
+| `taskSummary` | aggregated counts over **all** tasks (the `Tasks` query is paginated — no row cap), including a per-`level` breakdown (`byLevel`) | `{ done: 4, total: 7, byLevel: [...] }` |
 | `inputManifestPreview` | derived (not stored): first N `fileIndex → inputKey → plannedLeafTaskId` rows so the operator can verify which inputs feed which leaf | first 25 files |
 
-The list endpoint (`GET /jobs`) omits `taskSummary`/`taskDetails` (one `Tasks` query per job is too
-expensive for a list); the single-job endpoint (`GET /jobs/:id`) includes them for the detail view.
+The list endpoint (`GET /jobs`) omits `taskSummary` (one full `Tasks` scan per job is too
+expensive for a list); the single-job endpoint (`GET /jobs/:id`) includes it for the detail view.
 
 `percent` reports **work-step progress**, not leaf-only progress. The numerator estimates completed
 file-read steps plus completed tree steps; the denominator is planned file steps + tree steps + one

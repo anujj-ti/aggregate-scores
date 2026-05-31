@@ -26,6 +26,27 @@ function formatSubmittedAt(ms: number): string {
   return new Date(ms).toLocaleString();
 }
 
+function formatEndedAt(ms: number | undefined): string {
+  return ms === undefined ? "-" : new Date(ms).toLocaleString();
+}
+
+function formatDuration(durationMs: number | undefined): string {
+  if (durationMs === undefined) {
+    return "-";
+  }
+  const totalSeconds = Math.floor(durationMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${seconds}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+
 function compactJobId(jobId: string): string {
   if (jobId.length <= 18) {
     return jobId;
@@ -53,6 +74,8 @@ export function JobsTable({ jobs, onCancel, cancelPending }: JobsTableProps): Re
             <TableCell>C</TableCell>
             <TableCell>Progress</TableCell>
             <TableCell>Submitted</TableCell>
+            <TableCell>Ended</TableCell>
+            <TableCell>Total time</TableCell>
             <TableCell align="right">Actions</TableCell>
           </TableRow>
         </TableHead>
@@ -73,6 +96,8 @@ export function JobsTable({ jobs, onCancel, cancelPending }: JobsTableProps): Re
                 <JobProgress percent={job.percent} />
               </TableCell>
               <TableCell>{formatSubmittedAt(job.submittedAt)}</TableCell>
+              <TableCell>{formatEndedAt(job.endedAt)}</TableCell>
+              <TableCell>{formatDuration(job.durationMs)}</TableCell>
               <TableCell align="right">
                 <Stack direction="row" spacing={1} sx={{ justifyContent: "flex-end" }}>
                   <Button size="small" component={Link} href={`/jobs/${job.jobId}`} variant="outlined">

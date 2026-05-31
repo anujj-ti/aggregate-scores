@@ -44,7 +44,9 @@ class WorkerHandler:
         try:
             state_before = self.job_store.get_job(job_id=task.job_id)
             if state_before.status == "CANCELLED":
-                self.task_store.mark_done(job_id=task.job_id, task_id=task.task_id, partial_key=None)
+                self.task_store.mark_done(
+                    job_id=task.job_id, task_id=task.task_id, partial_key=None
+                )
                 return
 
             merged = merge_inputs(
@@ -141,8 +143,16 @@ class WorkerHandler:
 
     def _maybe_enqueue_follow_up(self, *, job: JobState, c: int) -> None:
         available = job.ready_count - job.claimed_count
-        tail_allowed = job.leaf_tasks_done == job.leaf_tasks_total and available >= 2
-        if available < self.chunk_size and not tail_allowed:
+        # Prefer full chunks of `chunk_size`: only merge a smaller batch at the genuine
+        # tail. `reductions_remaining + 1` is the number of partials still live in the
+        # whole job (ready + in-flight + leaves not yet produced). When that equals the
+        # ready pool, nothing else can arrive to complete a full chunk, so we must drain
+        # what we have; otherwise we wait for more partials to reach `chunk_size`.
+        # (Waiting in the tail case would deadlock; draining early would needlessly emit
+        # small merges, which is the behavior we are avoiding here.)
+        have_full_chunk = available >= self.chunk_size
+        at_genuine_tail = available >= 2 and available == job.reductions_remaining + 1
+        if not (have_full_chunk or at_genuine_tail):
             return
 
         claim_size = min(available, self.chunk_size)

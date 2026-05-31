@@ -37,9 +37,7 @@ export default function JobDetailPage(): React.JSX.Element {
   const [manifestPage, setManifestPage] = React.useState(0);
   const [manifestRowsPerPage, setManifestRowsPerPage] = React.useState(5);
   const [levelPage, setLevelPage] = React.useState(0);
-  const [levelRowsPerPage, setLevelRowsPerPage] = React.useState(5);
-  const [lineagePage, setLineagePage] = React.useState(0);
-  const [lineageRowsPerPage, setLineageRowsPerPage] = React.useState(10);
+  const [levelRowsPerPage, setLevelRowsPerPage] = React.useState(25);
 
   // Hooks must run on every render, so derive the CSV before any early return.
   const manifestPreview = jobQuery.data?.inputManifestPreview;
@@ -60,9 +58,6 @@ export default function JobDetailPage(): React.JSX.Element {
   React.useEffect(() => {
     setLevelPage(0);
   }, [jobQuery.data?.taskSummary?.byLevel.length]);
-  React.useEffect(() => {
-    setLineagePage(0);
-  }, [jobQuery.data?.taskDetails?.length]);
 
   if (jobQuery.isLoading) {
     return <Typography>Loading job...</Typography>;
@@ -95,11 +90,7 @@ export default function JobDetailPage(): React.JSX.Element {
     levelPage * levelRowsPerPage,
     levelPage * levelRowsPerPage + levelRowsPerPage
   );
-  const lineageRows = job.taskDetails ?? [];
-  const lineagePageRows = lineageRows.slice(
-    lineagePage * lineageRowsPerPage,
-    lineagePage * lineageRowsPerPage + lineageRowsPerPage
-  );
+  const totalTasks = liveTaskSummary?.total ?? 0;
   const inputManifestCsvHref =
     inputManifestCsv.length > 0 ? `data:text/csv;charset=utf-8,${encodeURIComponent(inputManifestCsv)}` : "";
 
@@ -138,7 +129,6 @@ export default function JobDetailPage(): React.JSX.Element {
               Ready partials: {job.readyCount} (claimed: {job.claimedCount ?? 0})
             </Typography>
           ) : null}
-
           {job.status === "GENERATING" ? (
             <Alert severity="info">
               Generating {job.F} input file(s) in the background. The job will move to the queue once
@@ -284,9 +274,15 @@ export default function JobDetailPage(): React.JSX.Element {
           {liveTaskSummary !== undefined && byLevelRows.length > 0 ? (
             <Accordion>
               <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                <Typography variant="subtitle2">Task breakdown by level ({byLevelRows.length} levels)</Typography>
+                <Typography variant="subtitle2">
+                  Task breakdown by level — full job ({byLevelRows.length} levels, {totalTasks} tasks)
+                </Typography>
               </AccordionSummary>
               <AccordionDetails>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                  Complete counts across all {totalTasks} tasks. Level 0 = leaf reads of input files;
+                  each higher level is a merge whose level is max(input levels) + 1.
+                </Typography>
                 <TableContainer component={Paper} variant="outlined">
                   <Table size="small">
                     <TableHead>
@@ -322,74 +318,6 @@ export default function JobDetailPage(): React.JSX.Element {
                   onRowsPerPageChange={(event) => {
                     setLevelRowsPerPage(Number.parseInt(event.target.value, 10));
                     setLevelPage(0);
-                  }}
-                  rowsPerPageOptions={[5, 10, 25]}
-                />
-              </AccordionDetails>
-            </Accordion>
-          ) : null}
-
-          {lineageRows.length > 0 ? (
-            <Accordion>
-              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                <Typography variant="subtitle2">
-                  Task lineage and processing map ({lineageRows.length} tasks loaded)
-                </Typography>
-              </AccordionSummary>
-              <AccordionDetails>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                  This shows exactly which inputs each task consumed, grouped by level.
-                </Typography>
-                {job.taskDetailsTruncated === true ? (
-                  <Alert severity="warning" sx={{ mb: 1 }}>
-                    Showing first {job.taskDetailsLimit ?? lineageRows.length} tasks only.
-                  </Alert>
-                ) : null}
-                <TableContainer component={Paper} variant="outlined">
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Level</TableCell>
-                        <TableCell>Task ID</TableCell>
-                        <TableCell>Kind</TableCell>
-                        <TableCell>Status</TableCell>
-                        <TableCell>Input kind</TableCell>
-                        <TableCell>Input keys</TableCell>
-                        <TableCell>Output partial</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {lineagePageRows.map((task) => (
-                        <TableRow key={task.taskId}>
-                          <TableCell>{task.level}</TableCell>
-                          <TableCell>{task.taskId}</TableCell>
-                          <TableCell>{task.kind}</TableCell>
-                          <TableCell>{task.status}</TableCell>
-                          <TableCell>{task.inputKind}</TableCell>
-                          <TableCell>
-                            <Stack spacing={0.25}>
-                              {task.inputKeys.map((key) => (
-                                <Typography key={key} variant="caption" component="div">
-                                  {key}
-                                </Typography>
-                              ))}
-                            </Stack>
-                          </TableCell>
-                          <TableCell>{task.partialKey ?? "-"}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-                <TablePagination
-                  component="div"
-                  count={lineageRows.length}
-                  page={lineagePage}
-                  onPageChange={(_, page) => setLineagePage(page)}
-                  rowsPerPage={lineageRowsPerPage}
-                  onRowsPerPageChange={(event) => {
-                    setLineageRowsPerPage(Number.parseInt(event.target.value, 10));
-                    setLineagePage(0);
                   }}
                   rowsPerPageOptions={[10, 25, 50]}
                 />

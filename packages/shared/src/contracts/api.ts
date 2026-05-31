@@ -2,20 +2,6 @@ import { z } from 'zod';
 
 import { jobStatusSchema } from './enums.js';
 
-export const taskDetailSchema = z.object({
-  taskId: z.string().min(1),
-  kind: z.enum(['leaf', 'merge']),
-  level: z.number().int().nonnegative(),
-  status: z.enum(['QUEUED', 'IN_PROGRESS', 'DONE', 'FAILED']),
-  inputKind: z.enum(['file', 'partial']),
-  inputKeys: z.array(z.string().min(1)).min(1),
-  attempts: z.number().int().nonnegative(),
-  partialKey: z.string().min(1).optional(),
-  error: z.string().min(1).optional()
-});
-
-export type TaskDetail = z.infer<typeof taskDetailSchema>;
-
 export const createJobRequestSchema = z.object({
   F: z.number().int().min(1),
   C: z.number().int().min(1),
@@ -41,6 +27,8 @@ export const jobViewSchema = z.object({
   // (test/demo speedup); false/absent when each input is an independent random vector.
   reuseSampleFile: z.boolean().optional(),
   submittedAt: z.number().int().nonnegative(),
+  endedAt: z.number().int().nonnegative().optional(),
+  durationMs: z.number().int().nonnegative().optional(),
   percent: z.number().min(0).max(1),
   reductionsRemaining: z.number().int().nonnegative(),
   queuePosition: z.number().int().positive().optional(),
@@ -68,9 +56,6 @@ export const jobViewSchema = z.object({
       )
     })
     .optional(),
-  taskDetails: z.array(taskDetailSchema).optional(),
-  taskDetailsTruncated: z.boolean().optional(),
-  taskDetailsLimit: z.number().int().positive().optional(),
   inputManifestPreview: z
     .array(
       z.object({

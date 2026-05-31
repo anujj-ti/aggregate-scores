@@ -154,17 +154,21 @@ atomic** so only one can win: each ready partial gets a sequence number, and a c
 
 **Two edge cases that fall straight out of this:**
 
-- **The tail (fewer than 5 left).** We can't always wait for a full 5. Once all leaf partials exist
-  (no new ones coming, only merge outputs), if just 2–4 are available we merge those — fewer than 5
-  is harmless, it still makes progress toward the same `N − 1` total.
+- **The tail (fewer than 5 left).** We **prefer to merge a full chunk of 5** and otherwise wait for
+  more partials to arrive. The exception is the *genuine tail*: when the ready pool already holds
+  **every** remaining live partial — nothing else is in flight and no leaves are left — there is no
+  6th/5th partial coming, so waiting would deadlock. We detect this precisely as
+  `available == reductionsRemaining + 1` (the count of all still-live partials), and only then merge
+  the leftover 2–4. This avoids greedily pairing partials in the upper tree while still guaranteeing
+  progress toward the same `N − 1` total.
 - **A lone partial.** Sometimes exactly one partial is ready with no partner; it simply waits. While
   `reductionsRemaining > 0`, another partial is guaranteed to exist or be coming, so it always gets
   paired — and it's the *counter*, not "I see one partial," that decides when it's truly the last.
 
-In one breath: **grab any 5 ready partials (or the tail of 2–4) and merge; one counter starting at
-`ceil(F/5) − 1` counts down by `c − 1` per merge and signals the end; an atomic claim stops double
-grabs.** Each concern is a single DynamoDB atomic operation — the rest of this section is the
-precise spec.
+In one breath: **merge a full chunk of 5 ready partials (or, only at the genuine tail, the final 2–4)
+and merge; one counter starting at `ceil(F/5) − 1` counts down by `c − 1` per merge and signals the
+end; an atomic claim stops double grabs.** Each concern is a single DynamoDB atomic operation — the
+rest of this section is the precise spec.
 
 ## Completion detection — one reductions counter (ITD 10)
 
@@ -192,7 +196,8 @@ partials get a per-job sequence number; a claimer advances `claimedCount` with a
 
 ```
 available = readyCount - claimedCount
-if available >= 5  (or leaves all produced and available >= 2):
+# prefer a full chunk; only drain a smaller batch at the genuine tail
+if available >= 5  or  (available >= 2 and available == reductionsRemaining + 1):
     claim n = min(available, 5):  UpdateItem ADD claimedCount n  IF claimedCount + n <= readyCount
     on success → enqueue one merge task for the claimed keys
 ```

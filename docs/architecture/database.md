@@ -128,9 +128,9 @@ alternative signal — see Fleet stats below.)
 | `error` | string? | compact failure message (set on `FAILED`), for the job-detail debug view |
 | `attempts` | number | for DLQ correlation |
 
-The `Tasks` rows (with `level`, `inputKeys`, `partialKey`) are what the job-detail page reads to render
-the **task lineage / processing map** — which inputs each leaf/merge consumed and which partial it
-produced, grouped by `level`.
+The `Tasks` rows (with `level`, `inputKeys`, `partialKey`) are aggregated by the single-job endpoint
+into the **per-level task breakdown** (`taskSummary.byLevel`) the job-detail page renders — full
+QUEUED/IN_PROGRESS/DONE/FAILED counts per `level` across every task (the query is paginated, not capped).
 
 > `Tasks.status` also guards idempotency: `reductionsRemaining` is decremented only on a task's first
 > `→ DONE` transition, so SQS redelivery never double-counts. Correctness relies on

@@ -5,6 +5,7 @@ import type {
   FleetRecord,
   JobRecord,
   RunningJobCounters,
+  TaskLevelSummary,
   TaskRecord
 } from '../../src/clients/dynamo.js';
 import type { S3Port } from '../../src/clients/s3.js';
@@ -153,6 +154,32 @@ export class MockDynamoStore implements DynamoPort {
           attempts: 0
         }))
     );
+  }
+
+  public countTaskLevels(jobId: string): Promise<TaskLevelSummary> {
+    const rows = this.tasks.filter((row) => row.jobId === jobId);
+    const levelMap = new Map<number, number>();
+    for (const row of rows) {
+      levelMap.set(row.level, (levelMap.get(row.level) ?? 0) + 1);
+    }
+    const byLevel = Array.from(levelMap.entries())
+      .sort((left, right) => left[0] - right[0])
+      .map(([level, count]) => ({
+        level,
+        queued: count,
+        inProgress: 0,
+        done: 0,
+        failed: 0,
+        total: count
+      }));
+    return Promise.resolve({
+      queued: rows.length,
+      inProgress: 0,
+      done: 0,
+      failed: 0,
+      total: rows.length,
+      byLevel
+    });
   }
 
   public hasRunningJobs(): Promise<boolean> {

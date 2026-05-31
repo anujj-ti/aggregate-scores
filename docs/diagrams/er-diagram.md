@@ -64,7 +64,7 @@ erDiagram
 
 ## Field notes
 
-- `TASKS.partialKey` — S3 key of the `(sum_vector, count)` partial this task produced (set on `DONE`); used by the job-detail lineage view to show which inputs produced which partial.
+- `TASKS.partialKey` — S3 key of the `(sum_vector, count)` partial this task produced (set on `DONE`); consumed by downstream merge tasks and used for debugging which inputs produced which partial.
 - `TASKS.error` — compact failure message (set on `FAILED`), surfaced for debugging.
 - `JOBS.reuseSampleFile` — input-generation mode flag (test/demo speedup). `true` ⇒ one random vector was copied to all F inputs (byte-identical, so the mean equals that single vector); `false`/absent ⇒ F independent random vectors.
 - `FLEET.inFlight` — count of **admitted tasks** (enqueued leaves + enqueued follow-up merges) that have not finished. It is incremented when a task is enqueued (dispatcher for leaves, worker for follow-up merges) and decremented exactly once when a task finishes, so it returns to `0` when a job reaches a terminal state. Reads clamp a negative value back to `0` as a fail-safe.

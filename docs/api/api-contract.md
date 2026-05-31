@@ -104,20 +104,6 @@ Read one job view.
       { "level": 1, "queued": 12, "inProgress": 5, "done": 4180, "failed": 0, "total": 4197 }
     ]
   },
-  "taskDetails": [
-    {
-      "taskId": "job_2f761ba4#leaf#0",
-      "kind": "leaf",
-      "level": 0,
-      "status": "DONE",
-      "inputKind": "file",
-      "inputKeys": ["jobs/job_2f761ba4/input/0.npy", "..."],
-      "attempts": 1,
-      "partialKey": "jobs/job_2f761ba4/partials/00000001.npz"
-    }
-  ],
-  "taskDetailsTruncated": false,
-  "taskDetailsLimit": 300,
   "inputManifestPreview": [
     {
       "fileIndex": 0,
@@ -139,12 +125,11 @@ Notes:
 - `percent` is work-step progress and stays `< 1` while status is `RUNNING`.
 - `reductionsRemaining == 0` is still the exact merge-side completion signal.
 - Diagnostics fields (`chunkSizeUsed`, `leafTasksTotal`, `leafTasksDone`, `readyCount`,
-  `claimedCount`, `taskSummary`, `taskDetails`, `inputManifestPreview`) are populated on the
-  single-job endpoint to drive the job-detail page. `GET /jobs` (list) omits `taskSummary`/
-  `taskDetails` for cost.
-- `taskSummary.byLevel` gives per-level QUEUED/IN_PROGRESS/DONE/FAILED counts; `taskDetails` is the
-  per-task lineage (which inputs produced which partial), bounded by `taskDetailsLimit` with
-  `taskDetailsTruncated` set when the cap is hit.
+  `claimedCount`, `taskSummary`, `inputManifestPreview`) are populated on the single-job endpoint to
+  drive the job-detail page. `GET /jobs` (list) omits `taskSummary` for cost.
+- `taskSummary` is computed over **all** tasks for the job (the API paginates the `Tasks` query — no
+  row cap), so `taskSummary.total` and `taskSummary.byLevel` always reflect the complete task history.
+  `byLevel` gives per-level QUEUED/IN_PROGRESS/DONE/FAILED counts.
 - `inputManifestPreview` is **derived** (not stored): a bounded `fileIndex → inputKey →
   plannedLeafTaskId` mapping the operator can download as CSV to verify inputs against the result.
 

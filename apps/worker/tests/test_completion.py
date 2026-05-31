@@ -87,6 +87,48 @@ def test_full_eager_merge_for_f30() -> None:
     assert complete_events == 1
 
 
+def _merge_sizes_for(*, f: int, c: int) -> tuple[list[int], int]:
+    """Run a job and return the input sizes of every enqueued merge task."""
+    job_id = f"job_sizes_{f}_{c}"
+    chunk = 5
+    leaf_total = (f + chunk - 1) // chunk
+    job = seeded_job(
+        job_id=job_id,
+        f=f,
+        c=c,
+        chunk_size_used=chunk,
+        reductions_remaining=leaf_total - 1,
+        leaf_tasks_total=leaf_total,
+    )
+    handler, blob, jobs, _tasks, queue, _fleet = make_handler_stack(job=job)
+    for file_idx in range(f):
+        vector = np.array(
+            [(file_idx + 1.0) * (axis + 1.0) for axis in range(c)], dtype=np.float64
+        )
+        blob.put_input_file(key=f"jobs/{job_id}/input/{file_idx}.npy", vector=vector)
+
+    pending = deque(_leaf_tasks(job_id=job_id, f=f, c=c, chunk_size=chunk))
+    seen = 0
+    while pending:
+        handler.process_task(pending.popleft())
+        while seen < len(queue.tasks):
+            pending.append(queue.tasks[seen])
+            seen += 1
+
+    merge_sizes = [len(task.input_keys) for task in queue.tasks]
+    return merge_sizes, jobs.complete_events[job_id]
+
+
+def test_prefers_full_chunks_and_only_shrinks_at_tail() -> None:
+    """Merges should batch chunk_size (5); a smaller merge only happens at the genuine tail."""
+    merge_sizes, complete_events = _merge_sizes_for(f=40, c=2)
+    # 8 leaf partials -> merge 5 (full chunk), then 4 remain as the genuine tail.
+    assert merge_sizes == [5, 4]
+    assert complete_events == 1
+    # Every merge except the last must be a full chunk of 5.
+    assert all(size == 5 for size in merge_sizes[:-1])
+
+
 def test_f_le_5_finalizes_directly_on_leaf() -> None:
     """Single leaf partial should finalize directly when reductions start at zero."""
     result, complete_events = _run_job(f=4, c=2)

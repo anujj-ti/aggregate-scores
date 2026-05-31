@@ -26,8 +26,6 @@ export type JobArchivePlan = {
 };
 
 export class JobService {
-  private static readonly TASK_DETAILS_LIMIT = 300;
-
   private static readonly ARCHIVE_INPUT_LIMIT = 500;
 
   private readonly dynamo: DynamoPort;
@@ -226,6 +224,13 @@ export class JobService {
       claimedCount: record.claimedCount
     };
 
+    const isTerminalStatus =
+      record.status === 'COMPLETE' || record.status === 'FAILED' || record.status === 'CANCELLED';
+    if (isTerminalStatus && record.updatedAt !== undefined) {
+      view.endedAt = record.updatedAt;
+      view.durationMs = Math.max(0, record.updatedAt - record.submittedAt);
+    }
+
     if (record.status === 'PENDING') {
       const beforeCount = await this.dynamo.countPendingBefore(record.submittedAt);
       view.queuePosition = beforeCount + 1;
@@ -237,60 +242,9 @@ export class JobService {
       view.error = record.error;
     }
     if (options.includeTaskSummary) {
-      const tasks = await this.dynamo.listTasksForJob(record.jobId, JobService.TASK_DETAILS_LIMIT);
-      const levelMap = new Map<number, { queued: number; inProgress: number; done: number; failed: number }>();
-      let queued = 0;
-      let inProgress = 0;
-      let done = 0;
-      let failed = 0;
-      for (const task of tasks) {
-        const current = levelMap.get(task.level) ?? { queued: 0, inProgress: 0, done: 0, failed: 0 };
-        if (task.status === 'QUEUED') {
-          queued += 1;
-          current.queued += 1;
-        } else if (task.status === 'IN_PROGRESS') {
-          inProgress += 1;
-          current.inProgress += 1;
-        } else if (task.status === 'DONE') {
-          done += 1;
-          current.done += 1;
-        } else if (task.status === 'FAILED') {
-          failed += 1;
-          current.failed += 1;
-        }
-        levelMap.set(task.level, current);
-      }
-      const byLevel = Array.from(levelMap.entries())
-        .sort((left, right) => left[0] - right[0])
-        .map(([level, counts]) => ({
-          level,
-          queued: counts.queued,
-          inProgress: counts.inProgress,
-          done: counts.done,
-          failed: counts.failed,
-          total: counts.queued + counts.inProgress + counts.done + counts.failed
-        }));
-      view.taskSummary = {
-        queued,
-        inProgress,
-        done,
-        failed,
-        total: tasks.length,
-        byLevel
-      };
-      view.taskDetails = tasks.map((task) => ({
-        taskId: task.taskId,
-        kind: task.kind,
-        level: task.level,
-        status: task.status,
-        inputKind: task.inputKind,
-        inputKeys: task.inputKeys,
-        attempts: task.attempts,
-        ...(task.partialKey !== undefined ? { partialKey: task.partialKey } : {}),
-        ...(task.error !== undefined ? { error: task.error } : {})
-      }));
-      view.taskDetailsLimit = JobService.TASK_DETAILS_LIMIT;
-      view.taskDetailsTruncated = tasks.length >= JobService.TASK_DETAILS_LIMIT;
+      // Full, uncapped per-level/per-status aggregation so the breakdown always
+      // reflects the complete merge history (no 300-row truncation).
+      view.taskSummary = await this.dynamo.countTaskLevels(record.jobId);
     }
     const chunkSizeUsed = record.chunkSizeUsed ?? CHUNK_SIZE;
     const leafTasksTotal = record.leafTasksTotal ?? Math.ceil(record.F / chunkSizeUsed);

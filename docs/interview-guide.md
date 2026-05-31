@@ -84,12 +84,15 @@ that worker finalizes. No per-level counters, no coordination — just one atomi
 
 **Q: What is "eager merge" and why not wait for each level to finish?**
 
-Every partial joins a ready pool; the instant ≥5 unclaimed partials exist (or, once all leaves are
-done, ≥2 remain as a tail), a worker claims up to `min(available, CHUNK_SIZE)` of them and queues a
-merge. It does **not** wait for a whole tree level
-to drain. A level barrier would leave workers idle holding the last few partials of a level — eager
-merge keeps the fleet busy and shortens the tail. The trade-off is that completion can't be a
-per-level count, which is exactly why the single `reductionsRemaining` counter matters.
+Every partial joins a ready pool. A worker merges as soon as it has a **full chunk** of `CHUNK_SIZE`
+(5) unclaimed partials, claiming exactly 5 (`min(available, CHUNK_SIZE)`). It does **not** wait for a
+whole tree level to drain. The only time it merges fewer than 5 is the **genuine tail** — when the
+ready pool already holds *every* remaining live partial (nothing else is in flight and no leaves are
+left), detected by `available == reductionsRemaining + 1`. At that point waiting for a 5th partial
+would deadlock, so it drains the leftover 2–4. This is deliberate: it keeps merges at the full chunk
+width instead of greedily pairing partials, while still guaranteeing progress. The trade-off is that
+completion can't be a per-level count, which is exactly why the single `reductionsRemaining` counter
+matters.
 
 **Q: How do two workers avoid grabbing the same partials?**
 
@@ -257,9 +260,9 @@ change to the computation.
 
 A live dashboard (1s polling): queue depth, generating/pending/running/complete/failed/cancelled
 counts, derived fleet utilization (`busy = min(W, inFlight)`, `buffered = max(0, inFlight − W)`), a
-work-units completion trend, and the worker control. A per-job page shows progress, task lineage by
-level, an input manifest, and downloads (one input, all-inputs `.zip`, `result.csv`). There's also an
-interactive architecture explorer with an embedded docs viewer.
+work-units completion trend, and the worker control. A per-job page shows progress, a full per-level
+task breakdown (counts across every task), an input manifest, and downloads (one input, all-inputs
+`.zip`, `result.csv`). There's also an interactive architecture explorer with an embedded docs viewer.
 
 ---
 

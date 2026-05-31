@@ -154,9 +154,12 @@ flowchart TD
 
 ## 4. Eager merge — the reduction tree (no level barrier)
 
-Each produced partial joins a per-job **ready pool**. The instant ≥5 unclaimed partials exist (or, once
-all leaves are done, ≥2 remain as a tail), a worker atomically **claims up to `min(available, 5)`** and
-enqueues one merge over them. Workers never wait for a whole tree "level" to drain.
+Each produced partial joins a per-job **ready pool**. The instant ≥5 unclaimed partials exist, a worker
+atomically **claims exactly 5** (`min(available, 5)`) and enqueues one merge over them. It merges fewer
+than 5 only at the **genuine tail** — when the pool holds every remaining live partial
+(`available == reductionsRemaining + 1`, nothing else in flight), where it drains the final 2–4.
+Workers never wait for a whole tree "level" to drain, and never greedily pair partials before reaching
+a full chunk.
 
 ```mermaid
 flowchart TD
