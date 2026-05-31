@@ -15,6 +15,9 @@ AWS_REGION="${AWS_REGION:-us-east-1}"
 API_PORT="${API_PORT:-3000}"
 WORKER_PORT="${WORKER_PORT:-8000}"
 FRONTEND_URL="${FRONTEND_URL:-http://localhost:${FRONTEND_PORT:-3001}}"
+TMP_DIR=".tmp"
+API_PID_FILE="${TMP_DIR}/api-dev.pid"
+API_LOG_FILE="${TMP_DIR}/api-dev.log"
 
 eval "$(pnpm tsx scripts/emit_local_exports.ts)"
 
@@ -41,6 +44,33 @@ fi
 echo "Initializing local AWS resources..."
 bash scripts/init-local-resources.sh
 
+mkdir -p "${TMP_DIR}"
+
+start_api_dev_server() {
+  if [[ -f "${API_PID_FILE}" ]]; then
+    local existing_pid
+    existing_pid="$(cat "${API_PID_FILE}")"
+    if ps -p "${existing_pid}" >/dev/null 2>&1; then
+      echo "API dev server already running (pid ${existing_pid})"
+      return
+    fi
+    rm -f "${API_PID_FILE}"
+  fi
+
+  echo "Starting API dev server..."
+  export AWS_REGION="${AWS_REGION}"
+  export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL}"
+  export AWS_ACCESS_KEY_ID="test"
+  export AWS_SECRET_ACCESS_KEY="test"
+  export AWS_SESSION_TOKEN="test"
+  pnpm --filter @aggregate/api dev >"${API_LOG_FILE}" 2>&1 &
+  local api_pid=$!
+  echo "${api_pid}" >"${API_PID_FILE}"
+  echo "API dev server started (pid ${api_pid}), logs: ${API_LOG_FILE}"
+}
+
+start_api_dev_server
+
 queue_work_url="$(aws_local sqs get-queue-url --queue-name "${QUEUE_WORK}" --query 'QueueUrl' --output text)"
 queue_dlq_url="$(aws_local sqs get-queue-url --queue-name "${QUEUE_DLQ}" --query 'QueueUrl' --output text)"
 
@@ -58,6 +88,7 @@ echo "- S3 bucket: s3://${S3_BUCKET_NAME}"
 echo "- SQS work queue: ${queue_work_url}"
 echo "- SQS DLQ: ${queue_dlq_url}"
 echo "- DynamoDB tables: ${DDB_TABLE_JOBS}, ${DDB_TABLE_READY}, ${DDB_TABLE_TASKS}, ${DDB_TABLE_FLEET}"
+echo "- API dev log: ${API_LOG_FILE}"
 echo
 
 open_browser() {
