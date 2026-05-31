@@ -11,6 +11,11 @@ alwaysApply: false
 - Use built-in generics: `list`, `dict`, `tuple`, `set`. NEVER `typing.List/Dict/Tuple/Set`.
 - Avoid `Any`. Use precise types or `Optional[T]` for nullables.
 
+## Imports
+- All imports must be at module top-level (after module docstring and `__future__` imports).
+- Do not place imports inside functions/methods except in rare, documented cases (e.g., unavoidable optional dependency loading).
+- Keep imports sorted and lint-clean (`ruff` import-order rules must pass).
+
 ## Structured data → Pydantic, never bare dict/tuple
 Model all structured/domain data (queue messages, partials, configs, API payloads)
 as Pydantic `BaseModel`. Do NOT pass multi-field data as `dict` or return it as `tuple`.
