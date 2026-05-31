@@ -3,12 +3,7 @@
   "definitions": {
     "JobStatus": {
       "type": "string",
-      "enum": [
-        "PENDING",
-        "RUNNING",
-        "COMPLETE",
-        "FAILED"
-      ]
+      "enum": ["PENDING", "RUNNING", "COMPLETE", "FAILED"]
     }
   },
   "$schema": "http://json-schema.org/draft-07/schema#"

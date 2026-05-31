@@ -16,11 +16,7 @@
           "type": "integer"
         }
       },
-      "required": [
-        "W",
-        "inFlight",
-        "free"
-      ],
+      "required": ["W", "inFlight", "free"],
       "additionalProperties": false
     }
   },

@@ -9,9 +9,7 @@
           "minimum": 0
         }
       },
-      "required": [
-        "count"
-      ],
+      "required": ["count"],
       "additionalProperties": false
     }
   },

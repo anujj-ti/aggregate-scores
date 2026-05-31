@@ -10,12 +10,7 @@
         },
         "status": {
           "type": "string",
-          "enum": [
-            "PENDING",
-            "RUNNING",
-            "COMPLETE",
-            "FAILED"
-          ]
+          "enum": ["PENDING", "RUNNING", "COMPLETE", "FAILED"]
         },
         "F": {
           "type": "integer",
@@ -51,15 +46,7 @@
           "minLength": 1
         }
       },
-      "required": [
-        "jobId",
-        "status",
-        "F",
-        "C",
-        "submittedAt",
-        "percent",
-        "reductionsRemaining"
-      ],
+      "required": ["jobId", "status", "F", "C", "submittedAt", "percent", "reductionsRemaining"],
       "additionalProperties": false
     }
   },

@@ -3,10 +3,7 @@
   "definitions": {
     "InputKind": {
       "type": "string",
-      "enum": [
-        "file",
-        "partial"
-      ]
+      "enum": ["file", "partial"]
     }
   },
   "$schema": "http://json-schema.org/draft-07/schema#"

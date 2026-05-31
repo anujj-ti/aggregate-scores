@@ -1,0 +1,22 @@
+services:
+  localstack:
+    image: localstack/localstack:3.8
+    container_name: aggregate-localstack
+    ports:
+      - '4566:4566'
+    environment:
+      - SERVICES=s3,sqs,dynamodb
+      - AWS_DEFAULT_REGION=${AWS_REGION:-us-east-1}
+      - DEBUG=${LOCALSTACK_DEBUG:-0}
+      - PERSISTENCE=1
+    volumes:
+      - localstack-data:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ['CMD', 'bash', '-lc', 'curl -fsS http://localhost:4566/_localstack/health >/dev/null']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  localstack-data:

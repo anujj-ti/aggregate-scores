@@ -13,10 +13,7 @@
           "minimum": 1
         }
       },
-      "required": [
-        "F",
-        "C"
-      ],
+      "required": ["F", "C"],
       "additionalProperties": false
     }
   },
