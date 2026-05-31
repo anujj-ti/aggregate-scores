@@ -23,6 +23,8 @@ cdk.out/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+apps/worker/log/
+log/
 coverage/
 .tmp/
 
