@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Build output
+dist/
+build/
+.next/
+out/
+cdk.out/
+*.tsbuildinfo
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Caches
+.turbo/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+coverage/
+
+# OS / editor
+.DS_Store
+*.log

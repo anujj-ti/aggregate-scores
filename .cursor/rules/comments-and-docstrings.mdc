@@ -1,0 +1,66 @@
+---
+description: Comment & docstring style — neutral third-person, explain intent, no diff narration
+globs: **/*.{ts,tsx,py}
+alwaysApply: false
+---
+
+# Comments & Docstrings
+
+Comments are written for a future reader who has **no knowledge of this chat, this PR, or who wrote
+it**. They must still make complete sense in six months.
+
+## Voice & framing
+
+- **Third-person, neutral, present tense.** Describe what the code *does* and *why*, as a
+  standalone statement of fact. Not first-person, not addressed to a reviewer.
+- **Never narrate the change or its history.** A comment describes the *current* behaviour, not
+  what was added/removed/fixed or what it used to be.
+
+```python
+# ❌ BAD — diff narration / first person / chat context
+# I switched this to a single queue as we discussed
+# changed from two lanes to one
+# TODO from review: handle F=1
+
+# ✅ GOOD — neutral statement of current intent
+# A job's leaf tasks and its re-queued merge tasks share one queue; admission (not
+# task priority) is what keeps a started job from stalling behind newer work.
+```
+
+## What to comment
+
+- Explain **intent, trade-offs, and constraints** the code cannot express itself: *why* this
+  approach, invariants that must hold, units, edge cases, links to the relevant ITD.
+- Do **not** restate the code. Avoid comments that narrate obvious operations.
+
+```python
+# ❌ redundant — the code already says this
+count += 1  # increment count
+
+# ✅ explains a non-obvious constraint
+# Accumulate in float64 even though inputs are float32: sums of up to 1e5 terms
+# must not lose low-order bits (see docs/algos/numerical-accuracy.md).
+acc += read_vector(key)
+```
+
+## Docstrings (public functions, classes, modules)
+
+Every public function/class/module gets a docstring stating its **contract**, not its line-by-line
+behaviour:
+
+- one-line summary of purpose (imperative mood: "Merge ≤5 partials into one."),
+- args/returns with meaning and units where ambiguous,
+- side effects (S3/DynamoDB writes, enqueues), and what it raises.
+
+```python
+def merge_partials(inputs: list[Partial]) -> Partial:
+    """Combine up to 5 partials into one by summing vectors and counts.
+
+    Inputs may be file-derived (count == 1) or prior partials. The result is the
+    associative monoid sum; no division happens here (the final divide is done only
+    when one partial remains). Raises ValueError if more than 5 inputs are given.
+    """
+```
+
+Python: triple-quoted docstrings (PEP 257). TypeScript: TSDoc (`/** ... */`) on exported symbols.
+Keep them current — a stale docstring is worse than none.

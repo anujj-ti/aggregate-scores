@@ -1,0 +1,43 @@
+---
+description: Python strict typing, Pydantic models, ruff + black, mypy strict
+globs: **/*.py
+alwaysApply: false
+---
+
+# Python Standards
+
+## Typing (strict)
+- `mypy --strict` must pass. No untyped defs, no implicit `Any`.
+- Use built-in generics: `list`, `dict`, `tuple`, `set`. NEVER `typing.List/Dict/Tuple/Set`.
+- Avoid `Any`. Use precise types or `Optional[T]` for nullables.
+
+## Structured data → Pydantic, never bare dict/tuple
+Model all structured/domain data (queue messages, partials, configs, API payloads)
+as Pydantic `BaseModel`. Do NOT pass multi-field data as `dict` or return it as `tuple`.
+Plain `dict`/`tuple` are allowed ONLY for genuine homogeneous collections/mappings.
+
+```python
+# ❌ BAD — structured data as dict / multi-value tuple
+def make_partial(sum_vector, count) -> dict:
+    return {"sum_vector": sum_vector, "count": count}
+
+def split(f: int) -> tuple:        # what are these fields?
+    return (num_tasks, chunk_size)
+
+# ✅ GOOD — Pydantic model
+import numpy as np
+from pydantic import BaseModel, ConfigDict
+
+class Partial(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    sum_vector: np.ndarray
+    count: int
+```
+
+## Tooling (must pass before commit / in CI)
+- `ruff check .` (lint + import order)
+- `black --check .` (formatting)
+- `mypy --strict .` (types)
+- `pytest` (tests)
+
+Config lives in `pyproject.toml`. Use `uv` for env/deps.

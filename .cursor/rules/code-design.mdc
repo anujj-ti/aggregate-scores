@@ -1,0 +1,58 @@
+---
+description: SOLID + DRY design principles; keep swappable seams (queue/dispatch) behind interfaces
+globs: **/*.{ts,tsx,py}
+alwaysApply: false
+---
+
+# Code Design — SOLID, DRY, Extensibility
+
+Write code that is easy to change. The queueing/dispatch/admission logic in particular is expected
+to evolve (single queue today, priority lanes or a different broker tomorrow), so isolate it behind
+stable interfaces.
+
+## SOLID (applied to this project)
+
+- **S — Single Responsibility.** One module = one reason to change. Keep these separate:
+  *splitting* (job → ≤5-input tasks), *merge* (combine partials), *completion* (atomic counters),
+  *admission* (which jobs enter), *transport* (SQS/S3/DynamoDB I/O). No "god" handler that does all.
+- **O — Open/Closed.** Add behaviour by adding an implementation, not by editing call sites.
+  New admission policy or queue backend = a new class implementing the existing port.
+- **L — Liskov.** Any `TaskQueue`/`JobStore` implementation must be substitutable without callers
+  knowing which concrete type they hold (real SQS vs LocalStack vs in-memory test double).
+- **I — Interface Segregation.** Small, role-specific ports (`TaskPublisher`, `TaskConsumer`,
+  `PartialStore`) rather than one wide interface. Consumers depend only on what they use.
+- **D — Dependency Inversion.** Business logic depends on abstractions, not on `boto3`/AWS SDK
+  types. Inject the adapter; never `import boto3` inside merge/admission logic.
+
+## Keep the volatile seams behind ports
+
+The queue/admission design is explicitly expected to change — make it a swap, not a rewrite:
+
+```python
+# ✅ domain depends on a port (Protocol), not on SQS
+from typing import Protocol
+
+class TaskQueue(Protocol):
+    def publish(self, task: Task) -> None: ...
+    def consume(self) -> list[Task]: ...
+
+class SqsTaskQueue:            # adapter — the ONLY place boto3/SQS appears
+    def publish(self, task: Task) -> None: ...
+    def consume(self) -> list[Task]: ...
+
+def dispatch(queue: TaskQueue, ...) -> None:   # logic is queue-agnostic
+    ...
+```
+
+Same rule for admission policy (`AdmissionPolicy` port: capacity-based today; serialize / priority
+later) and storage (`PartialStore`, `JobStore`). Switching backends or policy = a new adapter.
+
+## DRY
+
+- **One source of truth for contracts.** Message/partial/status shapes live once in
+  `packages/shared` (TS types + JSON Schema); the Python worker validates against the *same* schema.
+  Never hand-redefine a message shape in two places.
+- **One constant, one home.** `CHUNK_SIZE = 5`, capacity target `k`, table/queue names — defined
+  once (config/shared), imported everywhere. No magic numbers inline.
+- Extract repeated logic into a named function only when it represents a real concept; do not
+  over-abstract one-off code (avoid premature indirection — DRY ≠ "fewest lines").
