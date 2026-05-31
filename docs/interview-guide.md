@@ -239,6 +239,20 @@ wiring is target architecture (locally the knob drives admission, not an OS-leve
 job also snapshots `chunkSizeUsed` and its counters at admission, so changing `W` mid-flight can't
 shift a running job's partition math — config changes apply only to jobs admitted afterward.
 
+**Q: If a task started with `W=5` and mid-run I change to `W=10`, what exactly changes?**
+
+Two layers:
+
+1. **Scheduling/capacity changes immediately**: the admission threshold changes from `k·5` to `k·10`,
+   so the dispatcher can admit more pending work in subsequent ticks.
+2. **Task/job definition does not change**: for an already admitted/running job, `F`, `C`,
+   `chunkSizeUsed`, leaf partitioning, and reduction counters stay as-is. No repartition/restart.
+
+So the practical effect is usually **throughput/latency**, not mathematical intent. The computed mean
+remains the same target quantity. With parallel floating-point reductions, tiny least-significant-digit
+variation can still occur from operation ordering, but this is normal numeric behavior, not a semantic
+change to the computation.
+
 **Q: What does the UI show?**
 
 A live dashboard (1s polling): queue depth, generating/pending/running/complete/failed/cancelled
@@ -290,9 +304,9 @@ nudge is missed, the next tick re-checks capacity and admits the oldest pending 
 
 - **No per-message priority** — single queue + capacity admission instead. Right for batch
   throughput; wrong if you need latency SLAs per job.
-- **Progress bar is leaf-based** (`leafTasksDone / leafTasksTotal`), so it can read 100% while a final
-  merge or two is still running. `reductionsRemaining == 0` is the true completion signal; the bar
-  optimizes for "shows visible movement" over "is a perfect completion gauge."
+- **Progress is still modeled, not wall-clock exact** — it is now work-step based (file + tree +
+  finalize) so `RUNNING` does not show 100% before completion, but it remains an operator-facing
+  estimate rather than a strict per-op timer.
 - **Local execution is single-worker** for exactness; true multi-worker needs the extra publication
   ordering described above (the fail-closed guard is in place today).
 - **`reuseSampleFile` test mode** copies one vector to all F inputs for fast demos — production would

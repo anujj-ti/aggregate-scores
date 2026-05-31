@@ -10,9 +10,11 @@ REST contract for the backend surface. DTO names and field constraints come from
   The job starts in `GENERATING` while inputs are written to S3 in the background, then becomes
   `PENDING`. Backpressure (admission) is represented by `PENDING` queueing in DynamoDB.
 - `resultUrl` is a presigned S3 URL and is present only when a job is `COMPLETE`.
-- Progress (`percent`) reports leaf-task progress: `percent = leafTasksDone / leafTasksTotal`
-  (forced to `1` when `COMPLETE`). The merge phase is tracked separately by `reductionsRemaining`,
-  which counts down from `ceil(F / chunkSizeUsed) - 1` to `0`.
+- Progress (`percent`) reports work-step progress, not leaf-only progress:
+  `percent = (estimated file+tree steps done) / (planned file+tree steps + finalize)`, forced to `1`
+  when `COMPLETE`. This keeps `RUNNING` jobs below 100% until final merge/finalize is done. The merge
+  phase is also exposed directly by `reductionsRemaining`, which counts down from
+  `ceil(F / chunkSizeUsed) - 1` to `0`.
 - Job math uses an immutable per-job config snapshot (`chunkSizeUsed`): global config changes apply
   only to new jobs, not in-flight jobs.
 
@@ -134,8 +136,8 @@ Notes:
 - `queuePosition` appears only while `status=PENDING`.
 - `resultUrl` appears only while `status=COMPLETE`.
 - `error` appears only while `status=FAILED`.
-- `percent` is `leafTasksDone / leafTasksTotal` (leaf progress); it can read `1.0` while a final
-  merge is still in flight — `reductionsRemaining == 0` is the true completion signal.
+- `percent` is work-step progress and stays `< 1` while status is `RUNNING`.
+- `reductionsRemaining == 0` is still the exact merge-side completion signal.
 - Diagnostics fields (`chunkSizeUsed`, `leafTasksTotal`, `leafTasksDone`, `readyCount`,
   `claimedCount`, `taskSummary`, `taskDetails`, `inputManifestPreview`) are populated on the
   single-job endpoint to drive the job-detail page. `GET /jobs` (list) omits `taskSummary`/

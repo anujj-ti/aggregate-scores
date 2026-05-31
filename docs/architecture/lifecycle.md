@@ -150,7 +150,7 @@ The API derives a human-readable progress view from the same state, no extra boo
 | `status` | `Jobs.status` | `RUNNING` |
 | `reuseSampleFile` | `Jobs.reuseSampleFile` — whether inputs were one shared vector copied F times (test mode) or F distinct vectors | `true` |
 | `queuePosition` | rank among `PENDING` jobs by `submittedAt` (only while `PENDING`) | `3rd in line` |
-| `percent` | leaf-task progress: `leafTasksDone / leafTasksTotal` (forced to `1` when `COMPLETE`) | `~62%` |
+| `percent` | work-step progress: `(file steps + tree steps done) / (file steps + tree steps + finalize)` (forced to `1` when `COMPLETE`) | `~62%` |
 | `reductionsRemaining` | `Jobs.reductionsRemaining` (raw merges still to do) | `8000` |
 | `resultUrl` | `Jobs.resultKey` (presigned) once `COMPLETE` | — |
 | `chunkSizeUsed` / `leafTasksTotal` / `leafTasksDone` | `Jobs.*` snapshot counters | `5 / 3 / 2` |
@@ -162,33 +162,29 @@ The API derives a human-readable progress view from the same state, no extra boo
 The list endpoint (`GET /jobs`) omits `taskSummary`/`taskDetails` (one `Tasks` query per job is too
 expensive for a list); the single-job endpoint (`GET /jobs/:id`) includes them for the detail view.
 
-`percent` reports **leaf-task progress** (`leafTasksDone / leafTasksTotal`) because that is what moves
-visibly during the bulk of a job — every input file is read exactly once by a leaf task, so this bar
-advances smoothly as files are consumed. `reductionsRemaining` (the merge counter) is surfaced
-separately as an exact, grouping-independent completion signal: it starts at `ceil(F/chunkSizeUsed)-1`
-and counts monotonically down to 0. Both fields are read straight from stored counters — no
-estimation. The UI polls this endpoint (ITD 13 polling), so no always-on push channel is needed (ITD 7).
-
-> **Why leaf progress, not reduction progress, for the bar:** for a large `F`, almost all work is
-> reading files (leaf tasks); merges are comparatively few. A reduction-based bar sits near 0% for a
-> long time and then jumps at the end, which reads as "stuck". Leaf progress tracks the visible work.
+`percent` reports **work-step progress**, not leaf-only progress. The numerator estimates completed
+file-read steps plus completed tree steps; the denominator is planned file steps + tree steps + one
+finalize step. This prevents `RUNNING` jobs from showing `100%` while final merge/finalize work is still
+in flight. `reductionsRemaining` is still surfaced as the exact, grouping-independent merge completion
+signal: it starts at `ceil(F/chunkSizeUsed)-1` and counts monotonically down to `0`. The UI polls this
+endpoint (ITD 13 polling), so no always-on push channel is needed (ITD 7).
 
 ### Worked example — `F = 30, W = 5` (eager, no level barrier)
 
 `ceil(30/5) = 6` leaf partials ⇒ `leafTasksTotal = 6`, `reductionsRemaining` starts at `5`.
 
-| Time | Job status | Ready pool / counters | What the UI shows (`percent` = leaf progress) |
+| Time | Job status | Ready pool / counters | What the UI shows (`percent` = work-step progress) |
 |------|-----------|-----------------------|-------------------|
 | generating | `GENERATING` | inputs being written to S3 | `GENERATING · 0%` |
 | submit done | `PENDING` | nothing queued; waiting room | `PENDING · 1st in line · 0%` |
 | admitted | `RUNNING` | 6 leaf tasks `QUEUED`; `reductionsRemaining=5` | `RUNNING · 0%` (0/6 leaves) |
 | 5 leaves done | `RUNNING` | ready pool = 5 → claim 5, enqueue merge(5); 6th leaf still running | `RUNNING · ~83%` (5/6 leaves) |
-| 6th leaf + merge(5) done | `RUNNING` | all leaves done (`leafTasksDone=6`); `reductionsRemaining → 1`; 2 ready → merge(2) | `RUNNING · 100% leaf, 1 reduction left` |
+| 6th leaf + merge(5) done | `RUNNING` | all leaves done (`leafTasksDone=6`); `reductionsRemaining → 1`; 2 ready → merge(2) | `RUNNING · <100%, 1 reduction left` |
 | merge(2) done | `COMPLETE` | `reductionsRemaining → 0`; `result.csv` written, `count==30` ✓ | `COMPLETE · download` |
 
-Note the 6th leaf and `merge(5)` run **concurrently** — no waiting for a level to drain. The leaf bar
-can reach 100% while a final merge or two is still in flight; `reductionsRemaining` is the field that
-confirms true completion (it reaching 0 is what flips the job to `COMPLETE`).
+Note the 6th leaf and `merge(5)` run **concurrently** — no waiting for a level to drain. With work-step
+progress, the bar stays below 100% until final merge/finalize work is done; `reductionsRemaining`
+remains the exact merge-side completion signal.
 
 ### Edge case — `F ≤ 5`
 

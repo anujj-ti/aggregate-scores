@@ -39,6 +39,62 @@ export class JobService {
     this.s3 = deps.s3;
   }
 
+  private static planLevelTaskCounts(f: number, chunkSizeUsed: number): number[] {
+    const chunk = Math.max(1, chunkSizeUsed);
+    const levels: number[] = [];
+    let remaining = Math.max(1, f);
+    while (true) {
+      const tasksAtLevel = Math.max(1, Math.ceil(remaining / chunk));
+      levels.push(tasksAtLevel);
+      if (tasksAtLevel <= 1) {
+        return levels;
+      }
+      remaining = tasksAtLevel;
+    }
+  }
+
+  private static plannedWorkUnitsForRecord(record: JobRecord, chunkSizeUsed: number): number {
+    const levelTaskCounts = JobService.planLevelTaskCounts(record.F, chunkSizeUsed);
+    const taskSteps = levelTaskCounts.reduce((sum, count) => sum + count, 0);
+    return Math.max(0, record.F + taskSteps + 1);
+  }
+
+  private static estimatedWorkUnitsDoneForRecord(
+    record: JobRecord,
+    chunkSizeUsed: number,
+    leafTasksTotal: number,
+    leafTasksDone: number,
+    reductionsRemaining: number
+  ): number {
+    const totalUnits = JobService.plannedWorkUnitsForRecord(record, chunkSizeUsed);
+    if (totalUnits === 0) {
+      return 0;
+    }
+    if (record.status === 'COMPLETE') {
+      return totalUnits;
+    }
+
+    const clampedLeafDone = Math.min(leafTasksTotal, Math.max(0, leafTasksDone));
+    const fileStepsDone = Math.min(record.F, clampedLeafDone * chunkSizeUsed);
+
+    const levelTaskCounts = JobService.planLevelTaskCounts(record.F, chunkSizeUsed);
+    const mergeTasksTotal = Math.max(
+      0,
+      levelTaskCounts.reduce((sum, count) => sum + count, 0) - (levelTaskCounts[0] ?? 0)
+    );
+    const reductionsTotal = Math.max(leafTasksTotal - 1, 0);
+    const reductionsCompleted = Math.max(0, reductionsTotal - reductionsRemaining);
+    const mergeTasksDoneEstimate =
+      reductionsTotal === 0
+        ? 0
+        : Math.min(
+            mergeTasksTotal,
+            Math.round((reductionsCompleted / reductionsTotal) * mergeTasksTotal)
+          );
+
+    return Math.min(totalUnits, fileStepsDone + clampedLeafDone + mergeTasksDoneEstimate);
+  }
+
   public async createJob(payload: CreateJobRequest): Promise<CreateJobResponse> {
     const nowMs = Date.now();
     const jobId = `job_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
@@ -144,12 +200,15 @@ export class JobService {
     );
     const totalReductions = Math.max(leafTasksTotalForProgress - 1, 0);
     const reductionsRemaining = record.reductionsRemaining ?? totalReductions;
-    const percent =
-      record.status === 'COMPLETE'
-        ? 1
-        : leafTasksTotalForProgress === 0
-          ? 0
-          : leafTasksDoneForProgress / leafTasksTotalForProgress;
+    const totalUnits = JobService.plannedWorkUnitsForRecord(record, chunkSizeUsedForProgress);
+    const doneUnits = JobService.estimatedWorkUnitsDoneForRecord(
+      record,
+      chunkSizeUsedForProgress,
+      leafTasksTotalForProgress,
+      leafTasksDoneForProgress,
+      reductionsRemaining
+    );
+    const percent = totalUnits === 0 ? 0 : doneUnits / totalUnits;
 
     const view: JobView = {
       jobId: record.jobId,

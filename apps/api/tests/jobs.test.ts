@@ -45,5 +45,33 @@ describe('jobs endpoints', () => {
     expect(jobResponse.status).toBe(200);
     expect(view.status).toBe('CANCELLED');
   });
+
+  test('GET /jobs/:id does not report 100% while running merges remain', async () => {
+    const { app, dynamo } = buildTestApp();
+    const jobId = 'job_progress_running';
+    dynamo.jobs.set(jobId, {
+      jobId,
+      status: 'RUNNING',
+      submittedAt: Date.now(),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      F: 100,
+      C: 3,
+      chunkSizeUsed: 5,
+      leafTasksTotal: 20,
+      leafTasksDone: 20,
+      reductionsRemaining: 4,
+      readyCount: 20,
+      claimedCount: 16
+    });
+
+    const response = await request(app).get(`/jobs/${jobId}`);
+    const view = jobViewSchema.parse(response.body);
+
+    expect(response.status).toBe(200);
+    expect(view.status).toBe('RUNNING');
+    expect(view.percent).toBeGreaterThan(0);
+    expect(view.percent).toBeLessThan(1);
+  });
 });
 
