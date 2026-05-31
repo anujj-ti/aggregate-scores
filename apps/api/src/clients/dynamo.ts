@@ -190,7 +190,8 @@ export class DynamoStore implements DynamoPort {
 
   private sanitizeTaskRecord(rawRecord: z.infer<typeof taskRecordRawSchema>): TaskRecord {
     if (rawRecord.partialKey === '') {
-      const { partialKey: _partialKey, ...withoutEmptyPartialKey } = rawRecord;
+      const withoutEmptyPartialKey = { ...rawRecord };
+      delete withoutEmptyPartialKey.partialKey;
       return taskRecordSchema.parse(withoutEmptyPartialKey);
     }
     return taskRecordSchema.parse(rawRecord);

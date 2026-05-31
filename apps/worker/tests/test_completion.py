@@ -102,9 +102,7 @@ def _merge_sizes_for(*, f: int, c: int) -> tuple[list[int], int]:
     )
     handler, blob, jobs, _tasks, queue, _fleet = make_handler_stack(job=job)
     for file_idx in range(f):
-        vector = np.array(
-            [(file_idx + 1.0) * (axis + 1.0) for axis in range(c)], dtype=np.float64
-        )
+        vector = np.array([(file_idx + 1.0) * (axis + 1.0) for axis in range(c)], dtype=np.float64)
         blob.put_input_file(key=f"jobs/{job_id}/input/{file_idx}.npy", vector=vector)
 
     pending = deque(_leaf_tasks(job_id=job_id, f=f, c=c, chunk_size=chunk))

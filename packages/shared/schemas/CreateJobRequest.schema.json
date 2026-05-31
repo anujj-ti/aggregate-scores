@@ -11,9 +11,16 @@
         "C": {
           "type": "integer",
           "minimum": 1
+        },
+        "reuseSampleFile": {
+          "type": "boolean",
+          "default": false
         }
       },
-      "required": ["F", "C"],
+      "required": [
+        "F",
+        "C"
+      ],
       "additionalProperties": false
     }
   },

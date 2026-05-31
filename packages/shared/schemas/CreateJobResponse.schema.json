@@ -9,7 +9,9 @@
           "minLength": 1
         }
       },
-      "required": ["jobId"],
+      "required": [
+        "jobId"
+      ],
       "additionalProperties": false
     }
   },

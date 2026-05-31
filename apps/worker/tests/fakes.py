@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from threading import Lock
-from typing import Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -141,7 +140,7 @@ class FakeTaskStore:
             self.status[key] = "IN_PROGRESS"
             return TaskTransitionResult.STARTED
 
-    def mark_done(self, *, job_id: str, task_id: str, partial_key: Optional[str]) -> None:
+    def mark_done(self, *, job_id: str, task_id: str, partial_key: str | None) -> None:
         key = (job_id, task_id)
         with self._lock:
             self.status[key] = "DONE"

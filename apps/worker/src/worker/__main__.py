@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
-import boto3
+import boto3  # type: ignore[import-untyped]
 
 from worker.adapters.ddb_store import (
     DdbFleetCounter,

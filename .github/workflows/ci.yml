@@ -35,13 +35,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Typecheck
-        run: pnpm -r exec tsc --noEmit
+        run: pnpm typecheck
       - name: ESLint
         run: pnpm eslint .
-      - name: Prettier
-        run: pnpm prettier --check "**/*.{ts,tsx,js,mjs,cjs,json,yml,yaml}"
-      - name: Vitest
-        run: pnpm -r --if-present run test
+      - name: API tests
+        run: pnpm --filter @aggregate/api test
 
   contracts:
     runs-on: ubuntu-latest

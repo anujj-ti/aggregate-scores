@@ -6,7 +6,7 @@ import numpy as np
 
 from fakes import make_handler_stack, seeded_job
 from worker.contracts import InputKind
-from worker.models import TaskPayload
+from worker.models import JobState, TaskPayload
 
 
 def test_leaf_writes_partial_and_updates_leaf_done() -> None:
@@ -60,13 +60,13 @@ def test_started_task_error_still_releases_fleet_slot() -> None:
     original_get_job = jobs.get_job
     fault = {"raised": False}
 
-    def failing_get_job(*, job_id: str):  # type: ignore[override]
+    def failing_get_job(*, job_id: str) -> JobState:
         if not fault["raised"]:
             fault["raised"] = True
             raise RuntimeError("boom-before-merge")
         return original_get_job(job_id=job_id)
 
-    jobs.get_job = failing_get_job  # type: ignore[assignment]
+    jobs.get_job = failing_get_job  # type: ignore[method-assign]
 
     payload = TaskPayload(
         job_id="job_error_release",

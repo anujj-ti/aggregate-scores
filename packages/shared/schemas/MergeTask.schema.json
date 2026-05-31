@@ -14,7 +14,10 @@
         },
         "inputKind": {
           "type": "string",
-          "enum": ["file", "partial"]
+          "enum": [
+            "file",
+            "partial"
+          ]
         },
         "level": {
           "type": "integer",
@@ -34,7 +37,14 @@
           "minimum": 1
         }
       },
-      "required": ["jobId", "taskId", "inputKind", "level", "inputKeys", "C"],
+      "required": [
+        "jobId",
+        "taskId",
+        "inputKind",
+        "level",
+        "inputKeys",
+        "C"
+      ],
       "additionalProperties": false
     }
   },

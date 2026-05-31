@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from decimal import Decimal
-import time
-from typing import Optional, Protocol, cast
+from typing import Protocol, cast
 
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 
 from worker.config import Settings
 from worker.models import JobState, ReadyPartial, TaskPayload, TaskTransitionResult
@@ -173,7 +173,11 @@ class DdbJobStore:
             Key={"jobId": job_id},
             UpdateExpression="SET #s = :status, resultKey = :result, updatedAt = :now",
             ExpressionAttributeNames={"#s": "status"},
-            ExpressionAttributeValues={":status": "COMPLETE", ":result": result_key, ":now": _now_ms()},
+            ExpressionAttributeValues={
+                ":status": "COMPLETE",
+                ":result": result_key,
+                ":now": _now_ms(),
+            },
         )
 
     def set_failed(self, *, job_id: str, error: str) -> None:
@@ -182,7 +186,11 @@ class DdbJobStore:
             Key={"jobId": job_id},
             UpdateExpression="SET #s = :status, #e = :error, updatedAt = :now",
             ExpressionAttributeNames={"#s": "status", "#e": "error"},
-            ExpressionAttributeValues={":status": "FAILED", ":error": error[:1000], ":now": _now_ms()},
+            ExpressionAttributeValues={
+                ":status": "FAILED",
+                ":error": error[:1000],
+                ":now": _now_ms(),
+            },
         )
 
 
@@ -240,7 +248,7 @@ class DdbTaskStore:
                 return TaskTransitionResult.ALREADY_DONE
             raise
 
-    def mark_done(self, *, job_id: str, task_id: str, partial_key: Optional[str]) -> None:
+    def mark_done(self, *, job_id: str, task_id: str, partial_key: str | None) -> None:
         """Mark task done."""
         if partial_key is None:
             self._tasks.update_item(

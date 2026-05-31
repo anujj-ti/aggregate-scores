@@ -14,6 +14,7 @@ class CreateJobRequest(BaseModel):
     )
     F: int = Field(..., ge=1)
     C: int = Field(..., ge=1)
+    reuseSampleFile: bool | None = False
 
 
 class CreateJobResponse(BaseModel):
@@ -38,17 +39,55 @@ class InputKind(StrEnum):
 
 
 class JobStatus(StrEnum):
+    GENERATING = "GENERATING"
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     COMPLETE = "COMPLETE"
     FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
 
 
 class Status(StrEnum):
+    GENERATING = "GENERATING"
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     COMPLETE = "COMPLETE"
     FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class ByLevelItem(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    level: int = Field(..., ge=0)
+    queued: int = Field(..., ge=0)
+    inProgress: int = Field(..., ge=0)
+    done: int = Field(..., ge=0)
+    failed: int = Field(..., ge=0)
+    total: int = Field(..., ge=0)
+
+
+class TaskSummary(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    queued: int = Field(..., ge=0)
+    inProgress: int = Field(..., ge=0)
+    done: int = Field(..., ge=0)
+    failed: int = Field(..., ge=0)
+    total: int = Field(..., ge=0)
+    byLevel: list[ByLevelItem]
+
+
+class InputManifestPreviewItem(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    fileIndex: int = Field(..., ge=0)
+    inputKey: str = Field(..., min_length=1)
+    plannedLeafTaskId: str = Field(..., min_length=1)
+    plannedLeafLevel: int = Field(..., ge=0)
 
 
 class JobView(BaseModel):
@@ -59,10 +98,20 @@ class JobView(BaseModel):
     status: Status
     F: int = Field(..., ge=1)
     C: int = Field(..., ge=1)
+    reuseSampleFile: bool | None = None
     submittedAt: int = Field(..., ge=0)
+    endedAt: int | None = Field(None, ge=0)
+    durationMs: int | None = Field(None, ge=0)
     percent: float = Field(..., ge=0.0, le=1.0)
     reductionsRemaining: int = Field(..., ge=0)
     queuePosition: int | None = Field(None, gt=0)
+    chunkSizeUsed: int | None = Field(None, gt=0)
+    leafTasksTotal: int | None = Field(None, ge=0)
+    leafTasksDone: int | None = Field(None, ge=0)
+    readyCount: int | None = Field(None, ge=0)
+    claimedCount: int | None = Field(None, ge=0)
+    taskSummary: TaskSummary | None = None
+    inputManifestPreview: list[InputManifestPreviewItem] | None = None
     resultUrl: AnyUrl | None = None
     error: str | None = Field(None, min_length=1)
 

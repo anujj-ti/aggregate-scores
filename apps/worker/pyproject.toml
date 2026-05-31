@@ -41,6 +41,10 @@ mypy_path = "src"
 warn_unused_configs = true
 show_error_codes = true
 
+[[tool.mypy.overrides]]
+module = ["boto3", "boto3.*", "botocore", "botocore.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

@@ -10,7 +10,14 @@
         },
         "status": {
           "type": "string",
-          "enum": ["PENDING", "RUNNING", "COMPLETE", "FAILED"]
+          "enum": [
+            "GENERATING",
+            "PENDING",
+            "RUNNING",
+            "COMPLETE",
+            "FAILED",
+            "CANCELLED"
+          ]
         },
         "F": {
           "type": "integer",
@@ -20,7 +27,18 @@
           "type": "integer",
           "minimum": 1
         },
+        "reuseSampleFile": {
+          "type": "boolean"
+        },
         "submittedAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "endedAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "durationMs": {
           "type": "integer",
           "minimum": 0
         },
@@ -37,6 +55,132 @@
           "type": "integer",
           "exclusiveMinimum": 0
         },
+        "chunkSizeUsed": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "leafTasksTotal": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "leafTasksDone": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "readyCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "claimedCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "taskSummary": {
+          "type": "object",
+          "properties": {
+            "queued": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "inProgress": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "done": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "byLevel": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "level": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "queued": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "inProgress": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "done": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "failed": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "total": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "level",
+                  "queued",
+                  "inProgress",
+                  "done",
+                  "failed",
+                  "total"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "queued",
+            "inProgress",
+            "done",
+            "failed",
+            "total",
+            "byLevel"
+          ],
+          "additionalProperties": false
+        },
+        "inputManifestPreview": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "fileIndex": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "inputKey": {
+                "type": "string",
+                "minLength": 1
+              },
+              "plannedLeafTaskId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "plannedLeafLevel": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "fileIndex",
+              "inputKey",
+              "plannedLeafTaskId",
+              "plannedLeafLevel"
+            ],
+            "additionalProperties": false
+          }
+        },
         "resultUrl": {
           "type": "string",
           "format": "uri"
@@ -46,7 +190,15 @@
           "minLength": 1
         }
       },
-      "required": ["jobId", "status", "F", "C", "submittedAt", "percent", "reductionsRemaining"],
+      "required": [
+        "jobId",
+        "status",
+        "F",
+        "C",
+        "submittedAt",
+        "percent",
+        "reductionsRemaining"
+      ],
       "additionalProperties": false
     }
   },
