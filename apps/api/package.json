@@ -18,11 +18,13 @@
     "@aws-sdk/client-sqs": "^3.930.0",
     "@aws-sdk/lib-dynamodb": "^3.930.0",
     "@aws-sdk/s3-request-presigner": "^3.930.0",
+    "archiver": "^7.0.1",
     "express": "^5.1.0",
     "uuid": "^13.0.0",
     "zod": "^3.25.50"
   },
   "devDependencies": {
+    "@types/archiver": "^7.0.0",
     "@types/express": "^5.0.5",
     "@types/supertest": "^6.0.3",
     "supertest": "^7.1.4"

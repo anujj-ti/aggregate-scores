@@ -6,6 +6,7 @@ import type { ApiConfig } from '../config.js';
 export interface S3Port {
   putObject(key: string, body: Uint8Array): Promise<void>;
   getSignedDownloadUrl(key: string, expiresSeconds?: number): Promise<string>;
+  getObjectBytes(key: string): Promise<Uint8Array>;
 }
 
 type S3Deps = {
@@ -48,6 +49,19 @@ export class S3Store implements S3Port {
       Key: key
     });
     return getSignedUrl(this.client, command, { expiresIn: expiresSeconds });
+  }
+
+  public async getObjectBytes(key: string): Promise<Uint8Array> {
+    const response = await this.client.send(
+      new GetObjectCommand({
+        Bucket: this.bucketName,
+        Key: key
+      })
+    );
+    if (response.Body === undefined) {
+      throw new Error(`S3 object ${key} has no body`);
+    }
+    return response.Body.transformToByteArray();
   }
 }
 

@@ -28,8 +28,8 @@ flowchart TB
     UIapp -->|HTTPS| APIGW[API Gateway]
     APIGW --> APIfn[Lambda: API handlers]
 
-    APIfn -->|generate files| S3[(S3 bucket)]
-    APIfn -->|job status=PENDING| DDB[(DynamoDB)]
+    APIfn -->|generate files (background)| S3[(S3 bucket)]
+    APIfn -->|job status=GENERATING then PENDING| DDB[(DynamoDB)]
     APIfn -. set reserved concurrency = W .-> WorkerFn
 
     EB[EventBridge tick] --> DISP[Lambda: Dispatcher]

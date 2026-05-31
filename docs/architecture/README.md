@@ -16,6 +16,11 @@ This folder is the **design-first** layer of the project. We agree on the design
 | [infrastructure.md](./infrastructure.md) | AWS CDK stacks and service mapping (Lambda/SQS/DynamoDB/S3) |
 | [quality-and-ci.md](./quality-and-ci.md) | Type/lint/format gates, Pydantic/zod, CI/CD |
 
+## Runtime visual explainer
+
+The web app includes an interactive architecture explorer at `apps/web` route `/architecture`.
+It mirrors the same design documented in this folder and is intended for walkthroughs/demo.
+
 ---
 
 ## The key insight (why the design looks the way it does)
@@ -52,7 +57,8 @@ This single fact drives every decision below:
 - **Completion** → one grouping-free counter `reductionsRemaining = ceil(F/5) − 1`; each c-input
   merge subtracts `c − 1`, and reaching 0 means one partial is left → finalize (divide once by the
   validated count).
-- **Admission** → submissions are never rejected (accepted as `PENDING`); a dispatcher releases
+- **Admission** → submissions are never rejected. A job is accepted as `GENERATING` (inputs written
+  to S3 in the background), becomes `PENDING` once inputs exist, and a dispatcher releases `PENDING`
   jobs into the queue by capacity (~`k·W` in-flight tasks) so started jobs finish fast (ITD 6).
 
 ---

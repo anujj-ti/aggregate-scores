@@ -4,10 +4,33 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "dev": "WATCHPACK_POLLING=true next dev --webpack -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
     "format:check": "prettier --check .",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "@aggregate/shared": "workspace:*",
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/icons-material": "^9.0.1",
+    "@mui/material": "^9.0.1",
+    "@mui/material-nextjs": "^9.0.1",
+    "@mui/x-charts": "^9.3.0",
+    "@tanstack/react-query": "^5.100.14",
+    "next": "^16.2.6",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "react-markdown": "^10.1.0",
+    "reactflow": "^11.11.4",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "eslint-config-next": "^16.2.6"
   }
 }

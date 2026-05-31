@@ -1,6 +1,7 @@
 # Final Architecture Diagram
 
 Serverless-only deployment topology for API, dispatcher, worker, and storage systems.
+The live interactive version is also available in the UI at `/architecture`.
 
 ```mermaid
 flowchart TB
@@ -12,8 +13,9 @@ flowchart TB
     webApp -->|HTTPS| apiGw[API Gateway]
     apiGw --> apiLambda["Lambda API handlers"]
 
-    apiLambda -->|write job state| ddb[(DynamoDB)]
-    apiLambda -->|generate input files| s3[(S3)]
+    apiLambda -->|create job as GENERATING| ddb[(DynamoDB)]
+    apiLambda -->|materialize input files| s3[(S3)]
+    apiLambda -->|mark generation complete -> PENDING| ddb
     apiLambda -->|submit trigger| dispatcher["Lambda Dispatcher"]
 
     eventBridge["EventBridge tick"] --> dispatcher

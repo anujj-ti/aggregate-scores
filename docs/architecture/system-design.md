@@ -8,7 +8,8 @@ separate map/reduce — the "aggregator" is just the worker running the final me
 | Component | Tech | Deployable | Role |
 |-----------|------|------------|------|
 | **Frontend** | Next.js + TypeScript | `web` | Submit jobs (F, C), live dashboard, configure W (bonus) |
-| **API** | Node + Express + TS | `api` | Create job, generate input files, store job as `PENDING`, expose status |
+| **Architecture view** | React Flow (in Next.js) | `web` | Interactive explainer of queue, dispatcher, worker, and storage flow for reviews/demo |
+| **API** | Node + Express + TS | `api` | Create job as `GENERATING`, materialize inputs in S3, release to `PENDING`, expose status |
 | **Dispatcher** | Lambda (Node/TS) | `api` | Capacity-based admission: release PENDING jobs into the queue while in-flight tasks `< k·W` (ITD 6) |
 | **Worker** | Python (Lambda, ≤W concurrent) | `worker` | SQS-triggered; merge ≤5 inputs → one `(sum_vector, count)` partial; when ≥5 partials are ready, claim and enqueue a merge; finalize when one remains |
 | **Work queue** | SQS (standard) + DLQ | infra | Holds task messages; merge tasks re-queue onto it; consumed by the worker via event-source mapping (ITD 5) |
@@ -23,7 +24,7 @@ All compute is **Lambda** — nothing always-on (ITD 7).
 flowchart LR
     UI[Next.js UI] -->|POST /jobs F,C| API[Express API]
     API -->|generate F files| S3[(S3)]
-    API -->|write job status=PENDING| DDB[(DynamoDB)]
+    API -->|create job status=GENERATING, then mark PENDING| DDB[(DynamoDB)]
     API -->|202 Accepted| UI
 
     DISP[Dispatcher Lambda] -->|oldest PENDING while inFlight < k*W| DDB
@@ -58,8 +59,9 @@ sequenceDiagram
     participant W as Worker
 
     U->>A: POST /jobs { F, C }
+    A->>D: create Job(status=GENERATING, submittedAt)
     A->>S: generate + store F input files
-    A->>D: create Job(status=PENDING, submittedAt)
+    A->>D: mark Job(status=PENDING)
     A-->>U: 202 Accepted { jobId }
 
     P->>D: oldest PENDING while inFlight < k*W
@@ -87,8 +89,9 @@ sequenceDiagram
 
 ## Why this shape
 
-- **Never reject + admission.** Submissions are accepted instantly as `PENDING` (202) and held in
-  DynamoDB; the dispatcher releases them by capacity, so a started job runs fast instead of
+- **Never reject + admission.** Submissions are accepted instantly as `GENERATING` (202), then moved
+  to `PENDING` after inputs exist in S3. Dispatcher releases pending jobs by capacity, so a started
+  job runs fast instead of
   crawling behind newcomers, and the fleet is filled regardless of job size (ITD 6).
 - **One queue, pull model.** Lambda's SQS event-source mapping polls for us and hands tasks to
   available concurrency (0..W); faster invocations naturally process more — emergent load

@@ -2,10 +2,12 @@ import express from 'express';
 import { setWorkersRequestSchema } from '@aggregate/shared';
 import type { Express } from 'express';
 
+import type { S3Port } from './clients/s3.js';
 import { createFleetRouter } from './routes/fleet.js';
 import { createJobsRouter } from './routes/jobs.js';
 import { DispatcherService } from './services/dispatcher.js';
 import { FleetService } from './services/fleet-service.js';
+import { GeneratorService } from './services/generator.js';
 import { JobService } from './services/job-service.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { validateBody } from './middleware/validate.js';
@@ -14,6 +16,8 @@ type AppDeps = {
   readonly jobs: JobService;
   readonly fleet: FleetService;
   readonly dispatcher: DispatcherService;
+  readonly generator: GeneratorService;
+  readonly s3: S3Port;
   readonly dispatchOnSubmit?: boolean;
 };
 
@@ -26,6 +30,8 @@ export const createApp = (deps: AppDeps): Express => {
     createJobsRouter({
       jobs: deps.jobs,
       dispatcher: deps.dispatcher,
+      generator: deps.generator,
+      s3: deps.s3,
       dispatchOnSubmit: deps.dispatchOnSubmit ?? true
     })
   );

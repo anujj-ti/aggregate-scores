@@ -25,7 +25,7 @@ The system stores **two very different kinds of data**, so it uses two stores:
 
 | # | Who | Operation | Against |
 |---|-----|-----------|---------|
-| A1 | API | `PutItem` new job `PENDING` | `Jobs` |
+| A1 | API | `PutItem` new job `GENERATING`, then conditional `SET status=PENDING` once inputs exist | `Jobs` |
 | A2 | Dispatcher | Query oldest `PENDING` jobs | `Jobs` GSI (`status=PENDING` sorted by `submittedAt`) |
 | A3 | Dispatcher / Worker | `ADD inFlight ±n` | `Fleet` |
 | A4 | Worker | register a produced partial: `ADD readyCount +1`, then `PutItem` registry row | `Jobs` + `Ready` |
@@ -57,10 +57,11 @@ the dashboard. Single-table is possible, but for clarity we use a few small tabl
 | Attribute | Type | Notes |
 |-----------|------|-------|
 | `jobId` (PK) | string | `job_{uuid}` |
-| `status` | string | `PENDING \| RUNNING \| COMPLETE \| FAILED` (`PENDING` = admission waiting room, ITD 6) |
+| `status` | string | `GENERATING \| PENDING \| RUNNING \| COMPLETE \| FAILED \| CANCELLED` (`GENERATING` = inputs being written to S3; `PENDING` = admission waiting room, ITD 6; `CANCELLED` = operator soft-cancel, row kept) |
 | `submittedAt` | number | epoch ms; dispatcher admits oldest first (GSI `status` + `submittedAt`) |
 | `F` | number | file count |
 | `C` | number | values per file |
+| `reuseSampleFile` | boolean | input-generation mode: `true` = one random vector copied to all F keys (test/demo speedup, byte-identical inputs); `false`/absent = F independent random vectors |
 | `chunkSizeUsed` | number | immutable per-job partition size snapshot (default from `CHUNK_SIZE`) |
 | `leafTasksTotal` | number | `ceil(F/chunkSizeUsed)` — number of leaf partials; set at admission |
 | `leafTasksDone` | number | `ADD +1` per completed leaf; `== leafTasksTotal` ⇒ tail merges allowed |
@@ -123,8 +124,13 @@ alternative signal — see Fleet stats below.)
 | `level` | number | tree depth (leaf = 0, merge = `max(input levels) + 1`); **observability only**, not used for scheduling/completion |
 | `status` | string | `QUEUED \| IN_PROGRESS \| DONE \| FAILED` |
 | `inputKeys` | list | ≤5 S3 keys (input files for a leaf, partials for a merge) |
-| `partialKey` | string? | S3 key of the `(sum_vector, count)` partial it produced |
+| `partialKey` | string? | S3 key of the `(sum_vector, count)` partial it produced (set on `DONE`) |
+| `error` | string? | compact failure message (set on `FAILED`), for the job-detail debug view |
 | `attempts` | number | for DLQ correlation |
+
+The `Tasks` rows (with `level`, `inputKeys`, `partialKey`) are what the job-detail page reads to render
+the **task lineage / processing map** — which inputs each leaf/merge consumed and which partial it
+produced, grouped by `level`.
 
 > `Tasks.status` also guards idempotency: `reductionsRemaining` is decremented only on a task's first
 > `→ DONE` transition, so SQS redelivery never double-counts. Correctness relies on
@@ -137,11 +143,67 @@ registry to heartbeat. Free/busy is derived from concurrency instead:
 
 | Source | Gives | How |
 |--------|-------|-----|
-| `Fleet` item in DynamoDB | `inFlight` (busy), `W` (reserved concurrency) | worker `ADD inFlight +1` at start, `-1` at end; `free = W - inFlight` |
+| `Fleet` item in DynamoDB | `inFlight` (admitted tasks), `W` (reserved concurrency) | `ADD inFlight +1` **at enqueue** (dispatcher for leaves, worker for follow-up merges), `-1` **at task completion**; returns to `0` at terminal |
 | CloudWatch `ConcurrentExecutions` | busy (alt) | metric on the worker Lambda, read by the API for the dashboard |
+
+> **`inFlight` counts admitted tasks, not workers.** The dispatcher admits up to `k·W` tasks, so
+> `inFlight` can exceed `W`. The increment happens exactly once per task (at enqueue) and the
+> decrement exactly once (at completion, including the cancel-drain path), so the counter returns to
+> `0` when a job finishes — there is no residual "busy" after `COMPLETE`. The dashboard derives
+> operator-facing numbers from this: `busyWorkers = min(W, inFlight)`,
+> `idleWorkers = max(0, W - busyWorkers)`, `bufferedTasks = max(0, inFlight - W)`.
 
 The single-item DynamoDB counter is the simplest source for the live dashboard; CloudWatch is a
 zero-write alternative if we prefer not to touch DynamoDB on the hot path.
+
+> **Fail-safe read guard.** `inFlight` is mutated only by atomic `ADD ±1`, so under correct operation
+> it never goes negative. If a crash between an enqueue and its matching completion (or a manual table
+> edit) ever leaves it `< 0`, every fleet read clamps it back to `0` (a one-shot corrective `SET`)
+> rather than letting a malformed counter propagate. This keeps admission and the dashboard robust
+> against stale/partial state without masking the normal invariant.
+
+## Concurrency & consistency
+
+Correctness of the mean must **not** depend on how many workers run or on message timing. Two layers
+guarantee that.
+
+### 1. Atomic primitives (the only operations that touch shared counters)
+
+Every shared-state mutation is a single DynamoDB `UpdateItem` — never a read-modify-write in app code.
+All of these are supported by LocalStack's DynamoDB, so the **identical code path runs locally and on
+AWS** (no mock/real divergence):
+
+| Operation | Expression | Guarantee |
+|-----------|-----------|-----------|
+| Assign ready seq | `ADD readyCount :1` (+`leafTasksDone` for leaves), `ReturnValues=UPDATED_NEW` | monotonic, no two partials share a `seq` |
+| Apply reductions | `ADD reductionsRemaining :delta` | lost-update-free completion detection |
+| Claim partials | `ADD claimedCount :n` **with** `ConditionExpression: claimedCount = :expected AND readyCount = :expected` | compare-and-swap: two workers can never claim the same `seq` range |
+| Start task once | `SET status = IN_PROGRESS` **with** `ConditionExpression: attribute_not_exists(status) OR status = QUEUED` | SQS redelivery is idempotent; `reductionsRemaining` decremented only on first `→ DONE` |
+| In-flight counter | `ADD inFlight :delta` | exact admission signal under concurrent enqueue/complete |
+| Admit / cancel (API) | `SET status = … ` with `ConditionExpression` on prior status | one-shot transitions, no double-admit |
+
+Because the sum/count monoid is **commutative and associative**, the *order* in which partials are
+merged does not change the result — only that each input is counted exactly once. The claim CAS
+(disjoint inputs) + the idempotent `→ DONE` transition (no double-count) together provide exactly that.
+
+### 2. Local execution model — exact by construction
+
+`scripts/dev-up.sh` runs **one** worker process (`python -m worker`) with
+`WORKER_MAX_MESSAGES_PER_POLL=1`, and the poll loop processes a message to completion before fetching
+the next. So locally the worker is **strictly sequential**: there is no interleaving, every `Ready`
+row is durable before the next claim is read, and the counters are exact. This is the mode the demo
+runs in, so the reported mean is deterministic regardless of `C`, `F`, or job mix.
+
+### 3. Fail-closed guard for horizontal scaling
+
+A producer advances `readyCount` (which exposes a `seq` as claimable) just before it writes the `Ready`
+row + S3 partial. With a single sequential worker that window is never observed. If the system is later
+scaled to **multiple concurrent workers**, a claimer could read a `seq` whose `Ready` row is not yet
+durable. To prevent a silently-wrong mean, `claim_ready` re-reads the rows for the range it atomically
+claimed and **raises `ReadyPoolConsistencyError` if it does not resolve exactly `count` rows** — the job
+goes `FAILED` (loud, retryable) rather than aggregating a short input set. Making multi-worker the
+*default* would additionally require serialized seq-ordered publication (or a `TransactWriteItems`
+claim); the guard is the boundary marker for that future work.
 
 ## S3 layout
 
@@ -202,7 +264,7 @@ once as TypeScript types + JSON Schema; the Python worker validates incoming mes
 same schema so both sides cannot drift (DRY — one source of truth).
 
 ```ts
-export type JobStatus = "PENDING" | "RUNNING" | "COMPLETE" | "FAILED";
+export type JobStatus = "GENERATING" | "PENDING" | "RUNNING" | "COMPLETE" | "FAILED" | "CANCELLED";
 export type InputKind = "file" | "partial";
 
 export interface MergeTask {

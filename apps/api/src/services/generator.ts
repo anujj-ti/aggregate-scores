@@ -6,6 +6,22 @@ type GeneratorDeps = {
   readonly s3: S3Port;
 };
 
+type GenerateOptions = {
+  readonly reuseSampleFile?: boolean;
+  readonly shouldContinue?: () => Promise<boolean> | boolean;
+};
+
+// Upload fan-out. The bottleneck is the per-object PutObject round-trip, so we keep this many
+// uploads in flight at once instead of writing files strictly one after another.
+const UPLOAD_CONCURRENCY = 64;
+
+export class GenerationCancelledError extends Error {
+  public constructor(jobId: string) {
+    super(`Generation cancelled for ${jobId}`);
+    this.name = 'GenerationCancelledError';
+  }
+}
+
 export class GeneratorService {
   private readonly s3: S3Port;
 
@@ -13,17 +29,47 @@ export class GeneratorService {
     this.s3 = deps.s3;
   }
 
-  public async generateFiles(jobId: string, f: number, c: number): Promise<void> {
-    for (let fileIndex = 0; fileIndex < f; fileIndex += 1) {
-      const vector = new Float32Array(c);
-      for (let idx = 0; idx < c; idx += 1) {
-        vector[idx] = Math.random();
+  public async generateFiles(
+    jobId: string,
+    f: number,
+    c: number,
+    options: GenerateOptions = {}
+  ): Promise<void> {
+    // Reuse mode encodes one random vector and writes the same bytes to every key, skipping
+    // the per-file random generation and .npy encoding entirely.
+    const sharedBytes = options.reuseSampleFile === true ? encodeNpyFloat32(randomVector(c)) : null;
+
+    let nextIndex = 0;
+    const uploadNext = async (): Promise<void> => {
+      while (true) {
+        if (options.shouldContinue !== undefined) {
+          const shouldContinue = await options.shouldContinue();
+          if (!shouldContinue) {
+            throw new GenerationCancelledError(jobId);
+          }
+        }
+        const fileIndex = nextIndex;
+        nextIndex += 1;
+        if (fileIndex >= f) {
+          return;
+        }
+        const bytes = sharedBytes ?? encodeNpyFloat32(randomVector(c));
+        await this.s3.putObject(inputKey(jobId, fileIndex), bytes);
       }
-      const bytes = encodeNpyFloat32(vector);
-      await this.s3.putObject(inputKey(jobId, fileIndex), bytes);
-    }
+    };
+
+    const workerCount = Math.min(UPLOAD_CONCURRENCY, f);
+    await Promise.all(Array.from({ length: workerCount }, () => uploadNext()));
   }
 }
+
+const randomVector = (length: number): Float32Array => {
+  const vector = new Float32Array(length);
+  for (let idx = 0; idx < length; idx += 1) {
+    vector[idx] = Math.random();
+  }
+  return vector;
+};
 
 export const encodeNpyFloat32 = (array: Float32Array): Uint8Array => {
   const magic = new Uint8Array([0x93, 0x4e, 0x55, 0x4d, 0x50, 0x59]);

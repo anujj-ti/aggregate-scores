@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-export const jobStatusSchema = z.enum(['PENDING', 'RUNNING', 'COMPLETE', 'FAILED']);
+export const jobStatusSchema = z.enum([
+  'GENERATING',
+  'PENDING',
+  'RUNNING',
+  'COMPLETE',
+  'FAILED',
+  'CANCELLED'
+]);
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 
 export const taskStatusSchema = z.enum(['QUEUED', 'IN_PROGRESS', 'DONE', 'FAILED']);

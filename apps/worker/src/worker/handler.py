@@ -40,9 +40,13 @@ class WorkerHandler:
         if transition == TaskTransitionResult.ALREADY_DONE:
             return
 
-        self.fleet_counter.add(delta=1)
         produced_partial_key = ""
         try:
+            state_before = self.job_store.get_job(job_id=task.job_id)
+            if state_before.status == "CANCELLED":
+                self.task_store.mark_done(job_id=task.job_id, task_id=task.task_id, partial_key=None)
+                return
+
             merged = merge_inputs(
                 (
                     self.blob_store.read_input(
@@ -83,6 +87,14 @@ class WorkerHandler:
                 job_id=task.job_id,
                 reductions_delta=reductions_delta,
             )
+            state = self.job_store.get_job(job_id=task.job_id)
+            if state.status == "CANCELLED":
+                self.task_store.mark_done(
+                    job_id=task.job_id,
+                    task_id=task.task_id,
+                    partial_key=produced_partial_key,
+                )
+                return
 
             if remaining == 0:
                 self._finalize_if_valid(
@@ -91,7 +103,6 @@ class WorkerHandler:
                     produced_sum_vector=merged.sum_vector,
                 )
             else:
-                state = self.job_store.get_job(job_id=task.job_id)
                 self._maybe_enqueue_follow_up(job=state, c=task.c)
 
             self.task_store.mark_done(
@@ -119,6 +130,8 @@ class WorkerHandler:
         produced_sum_vector: npt.NDArray[np.float64],
     ) -> None:
         state = self.job_store.get_job(job_id=job_id)
+        if state.status == "CANCELLED":
+            return
         if merged_count != state.f:
             raise JobIntegrityError(f"expected {state.f} files, aggregated {merged_count}")
         final = produced_sum_vector / merged_count
@@ -148,3 +161,4 @@ class WorkerHandler:
         )
         self.task_store.mark_queued(task=follow_up)
         self.work_queue.enqueue(task=follow_up)
+        self.fleet_counter.add(delta=1)

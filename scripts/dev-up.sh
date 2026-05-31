@@ -18,6 +18,10 @@ FRONTEND_URL="${FRONTEND_URL:-http://localhost:${FRONTEND_PORT:-3001}}"
 TMP_DIR=".tmp"
 API_PID_FILE="${TMP_DIR}/api-dev.pid"
 API_LOG_FILE="${TMP_DIR}/api-dev.log"
+WORKER_PID_FILE="${TMP_DIR}/worker-dev.pid"
+WORKER_LOG_FILE="${TMP_DIR}/worker-dev.log"
+WEB_PID_FILE="${TMP_DIR}/web-dev.pid"
+WEB_LOG_FILE="${TMP_DIR}/web-dev.log"
 
 eval "$(pnpm tsx scripts/emit_local_exports.ts)"
 
@@ -69,7 +73,46 @@ start_api_dev_server() {
   echo "API dev server started (pid ${api_pid}), logs: ${API_LOG_FILE}"
 }
 
+start_worker_dev_process() {
+  if [[ -f "${WORKER_PID_FILE}" ]]; then
+    local existing_pid
+    existing_pid="$(cat "${WORKER_PID_FILE}")"
+    if ps -p "${existing_pid}" >/dev/null 2>&1; then
+      echo "Worker already running (pid ${existing_pid})"
+      return
+    fi
+    rm -f "${WORKER_PID_FILE}"
+  fi
+
+  echo "Starting Python worker..."
+  PYTHONPATH="apps/worker/src" \
+    python -m worker >"${WORKER_LOG_FILE}" 2>&1 &
+  local worker_pid=$!
+  echo "${worker_pid}" >"${WORKER_PID_FILE}"
+  echo "Worker started (pid ${worker_pid}), logs: ${WORKER_LOG_FILE}"
+}
+
+start_web_dev_server() {
+  if [[ -f "${WEB_PID_FILE}" ]]; then
+    local existing_pid
+    existing_pid="$(cat "${WEB_PID_FILE}")"
+    if ps -p "${existing_pid}" >/dev/null 2>&1; then
+      echo "Web dev server already running (pid ${existing_pid})"
+      return
+    fi
+    rm -f "${WEB_PID_FILE}"
+  fi
+
+  echo "Starting web dev server..."
+  pnpm --filter @aggregate/web dev >"${WEB_LOG_FILE}" 2>&1 &
+  local web_pid=$!
+  echo "${web_pid}" >"${WEB_PID_FILE}"
+  echo "Web dev server started (pid ${web_pid}), logs: ${WEB_LOG_FILE}"
+}
+
 start_api_dev_server
+start_worker_dev_process
+start_web_dev_server
 
 queue_work_url="$(aws_local sqs get-queue-url --queue-name "${QUEUE_WORK}" --query 'QueueUrl' --output text)"
 queue_dlq_url="$(aws_local sqs get-queue-url --queue-name "${QUEUE_DLQ}" --query 'QueueUrl' --output text)"
@@ -89,6 +132,8 @@ echo "- SQS work queue: ${queue_work_url}"
 echo "- SQS DLQ: ${queue_dlq_url}"
 echo "- DynamoDB tables: ${DDB_TABLE_JOBS}, ${DDB_TABLE_READY}, ${DDB_TABLE_TASKS}, ${DDB_TABLE_FLEET}"
 echo "- API dev log: ${API_LOG_FILE}"
+echo "- Worker log: ${WORKER_LOG_FILE}"
+echo "- Web dev log: ${WEB_LOG_FILE}"
 echo
 
 open_browser() {
@@ -103,5 +148,6 @@ open_browser() {
   fi
 }
 
-echo "Opening frontend URL in browser (service may not exist yet)..."
+echo "Opening frontend URL in browser..."
 open_browser
+echo "Startup script finished. Services keep running in background. Use ./scripts/dev-down.sh to stop them."

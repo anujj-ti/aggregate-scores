@@ -12,11 +12,13 @@ sequenceDiagram
     participant Queue as SQSWorkQueue
     participant Worker as WorkerLambda
 
-    User->>Api: POST /jobs {F,C}
-    Api->>S3: create F input files
-    Api->>Ddb: put Job(status=PENDING, counters initialized)
-    Api->>Disp: trigger admission
+    User->>Api: POST /jobs {F,C,reuseSampleFile?}
+    Api->>Ddb: put Job(status=GENERATING, counters initialized)
     Api-->>User: 202 {jobId}
+    Note over Api,S3: background (off request/dispatcher path)
+    Api->>S3: generate F input files
+    Api->>Ddb: mark Job(status=PENDING)
+    Api->>Disp: trigger admission
 
     Disp->>Ddb: query oldest PENDING while inFlight < k*W
     Disp->>Queue: enqueue ceil(F/5) leaf tasks

@@ -19,36 +19,56 @@ through `QUEUED → IN_PROGRESS → DONE`.
 
 | Status | Meaning | Stored where |
 |--------|---------|--------------|
-| `PENDING` | Accepted and durably stored, **waiting in the admission room** — files generated, but no tasks enqueued yet. Submissions are **never rejected**, so backpressure shows up here (ITD 6). | `Jobs.status` + a `status`/`submittedAt` GSI the dispatcher scans oldest-first |
+| `GENERATING` | Accepted and durably stored, but its input files do not exist yet — they are being **materialized to S3 in the background** (the local stand-in for a user upload). The dispatcher never sees this job, so generation never blocks the fleet. | `Jobs.status` |
+| `PENDING` | Inputs exist in S3; the job is now **waiting in the admission room** with no tasks enqueued yet. Submissions are **never rejected**, so backpressure shows up here (ITD 6). | `Jobs.status` + a `status`/`submittedAt` GSI the dispatcher scans oldest-first |
 | `RUNNING` | **Admitted** by the dispatcher; leaf tasks are on the queue. The job stays `RUNNING` for its whole life — admission happens once, then merge tasks are queued eagerly as partials accumulate. | `Jobs.status` |
 | `COMPLETE` | The final merge produced `result.csv` and the count check (`Σcount == F`) passed. Terminal. | `Jobs.status` + `Jobs.resultKey` |
 | `FAILED` | A task exhausted its retries (landed in the DLQ) **or** the final integrity check failed. Terminal. | `Jobs.status` + `Jobs.error` |
+| `CANCELLED` | An operator cancelled the job while it was `GENERATING`, `PENDING`, or `RUNNING`. The job row is **kept** (soft cancel, not deleted) so history and diagnostics stay visible. Terminal. | `Jobs.status` |
 
 There is deliberately **no** `REDUCING` or `AGGREGATING` status: there is no separate reduce stage
 (ITD 3) — finalize is just the last merge task, so the job is `RUNNING` right up to `COMPLETE`.
+
+**Cancellation is a soft delete.** `DELETE /jobs/:id` does not remove the record; it transitions
+`GENERATING|PENDING|RUNNING → CANCELLED` via a conditional write. Already-terminal jobs
+(`COMPLETE|FAILED|CANCELLED`) return `409`. A `RUNNING` job may have in-flight tasks: the worker
+re-reads job status and, if `CANCELLED`, stops producing the result and skips enqueuing follow-up
+merges (a task already executing may finish, but it will not finalize or spawn more work), and it
+still releases its in-flight slot. This is best-effort cancellation without a hard barrier.
 
 ### Job state machine
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PENDING: POST /jobs accepted, F files generated
+    [*] --> GENERATING: POST /jobs accepted (202); input generation kicked off in background
+    GENERATING --> PENDING: all F input files written to S3
+    GENERATING --> FAILED: input generation errors
     PENDING --> RUNNING: dispatcher admits (in-flight < k*W), leaf tasks enqueued
     RUNNING --> RUNNING: >=5 partials ready (or tail) -> claim + enqueue a merge task
     RUNNING --> COMPLETE: reductionsRemaining hits 0, result.csv written, count == F
     RUNNING --> FAILED: a task hits the DLQ, or finalize count check fails
+    GENERATING --> CANCELLED: operator DELETE /jobs/:id (before inputs ready)
+    PENDING --> CANCELLED: operator DELETE /jobs/:id (never admitted)
+    RUNNING --> CANCELLED: operator DELETE /jobs/:id (best-effort stop)
     COMPLETE --> [*]
     FAILED --> [*]
+    CANCELLED --> [*]
 ```
 
 ### Job transitions in detail
 
 | From → To | Trigger | Who writes it | Side effects |
 |-----------|---------|---------------|--------------|
-| `(none)` → `PENDING` | `POST /jobs {F,C}` | **API** | Generate F input files to S3; write `Jobs` item (`status=PENDING`, `submittedAt`); return `202 Accepted`; ping dispatcher |
+| `(none)` → `GENERATING` | `POST /jobs {F,C,reuseSampleFile?}` | **API** | Write `Jobs` item (`status=GENERATING`, `submittedAt`, `reuseSampleFile`); return `202 Accepted`; kick off background input generation |
+| `GENERATING` → `PENDING` | Background generation finishes writing all F input files to S3 | **API** (submit path) | Conditional `SET status=PENDING`; ping dispatcher. Generation runs off the request/dispatcher critical path |
+| `GENERATING` → `FAILED` | Input generation throws | **API** (submit path) | Set `error`; job never reaches the queue |
 | `PENDING` → `RUNNING` | Dispatcher sees `inFlight < k·W` and this is the oldest PENDING job | **Dispatcher** | Snapshot `chunkSizeUsed` for this job, compute `leafTasksTotal = ceil(F/chunkSizeUsed)` and `reductionsRemaining = leafTasksTotal - 1`, enqueue leaf tasks, `ADD inFlight +<numTasks>` |
 | `RUNNING` → `RUNNING` | A task produces a partial and the ready pool has ≥5 (or the tail) | **Worker** (that wins the conditional claim) | Claim ≤5 ready partials; enqueue one merge task; `ADD inFlight +1` |
 | `RUNNING` → `COMPLETE` | A merge drives `reductionsRemaining` to **0** (one partial left) | **Worker** (finalize) | `result.csv = sum_vector / count` (assert `count == F`); set `resultKey`; `ADD inFlight -…`; ping dispatcher (capacity freed) |
 | `RUNNING` → `FAILED` | A task exceeds `maxReceiveCount` (→ DLQ) or finalize count check fails | **Worker / DLQ handler** | Set `error`; release in-flight capacity; ping dispatcher |
+| `GENERATING` → `CANCELLED` | Operator `DELETE /jobs/:id` before inputs are ready | **API** (conditional write) | Set `status=CANCELLED`; row kept; the generation completion write (`→ PENDING`) is conditional on `GENERATING`, so it no-ops |
+| `PENDING` → `CANCELLED` | Operator `DELETE /jobs/:id` on a not-yet-admitted job | **API** (conditional write) | Set `status=CANCELLED`; row kept; dispatcher will skip it (only admits `PENDING`) |
+| `RUNNING` → `CANCELLED` | Operator `DELETE /jobs/:id` on an admitted job | **API** (conditional write) | Set `status=CANCELLED`; workers stop finalizing / enqueuing follow-ups for this job; in-flight tasks drain and release their slots |
 
 > **Why `PENDING` is a job status and not "in a queue":** a PENDING job has **no SQS messages** —
 > it lives only in DynamoDB. Putting un-admitted work on the queue is what we are avoiding; the
@@ -128,28 +148,47 @@ The API derives a human-readable progress view from the same state, no extra boo
 | Field | Source | Example |
 |-------|--------|---------|
 | `status` | `Jobs.status` | `RUNNING` |
+| `reuseSampleFile` | `Jobs.reuseSampleFile` — whether inputs were one shared vector copied F times (test mode) or F distinct vectors | `true` |
 | `queuePosition` | rank among `PENDING` jobs by `submittedAt` (only while `PENDING`) | `3rd in line` |
-| `percent` | reductions done ÷ total: `1 - reductionsRemaining / (ceil(F/5) - 1)` | `~62%` |
+| `percent` | leaf-task progress: `leafTasksDone / leafTasksTotal` (forced to `1` when `COMPLETE`) | `~62%` |
 | `reductionsRemaining` | `Jobs.reductionsRemaining` (raw merges still to do) | `8000` |
 | `resultUrl` | `Jobs.resultKey` (presigned) once `COMPLETE` | — |
+| `chunkSizeUsed` / `leafTasksTotal` / `leafTasksDone` | `Jobs.*` snapshot counters | `5 / 3 / 2` |
+| `readyCount` / `claimedCount` | `Jobs.*` ready-pool counters | `7 / 5` |
+| `taskSummary` | aggregated counts from a `Tasks` query, including a per-`level` breakdown (`byLevel`) | `{ done: 4, byLevel: [...] }` |
+| `taskDetails` | per-task lineage from `Tasks` (taskId, kind, level, status, inputKeys, partialKey) — bounded by a server limit, with `taskDetailsTruncated`/`taskDetailsLimit` flags | for the job-detail processing map |
+| `inputManifestPreview` | derived (not stored): first N `fileIndex → inputKey → plannedLeafTaskId` rows so the operator can verify which inputs feed which leaf | first 25 files |
 
-`reductionsRemaining` is an exact, grouping-independent progress signal: it starts at `ceil(F/5)-1`
-and counts monotonically down to 0, so `percent` needs no estimation. The UI polls this endpoint
-(ITD 13 polling), so no always-on push channel is needed (ITD 7).
+The list endpoint (`GET /jobs`) omits `taskSummary`/`taskDetails` (one `Tasks` query per job is too
+expensive for a list); the single-job endpoint (`GET /jobs/:id`) includes them for the detail view.
+
+`percent` reports **leaf-task progress** (`leafTasksDone / leafTasksTotal`) because that is what moves
+visibly during the bulk of a job — every input file is read exactly once by a leaf task, so this bar
+advances smoothly as files are consumed. `reductionsRemaining` (the merge counter) is surfaced
+separately as an exact, grouping-independent completion signal: it starts at `ceil(F/chunkSizeUsed)-1`
+and counts monotonically down to 0. Both fields are read straight from stored counters — no
+estimation. The UI polls this endpoint (ITD 13 polling), so no always-on push channel is needed (ITD 7).
+
+> **Why leaf progress, not reduction progress, for the bar:** for a large `F`, almost all work is
+> reading files (leaf tasks); merges are comparatively few. A reduction-based bar sits near 0% for a
+> long time and then jumps at the end, which reads as "stuck". Leaf progress tracks the visible work.
 
 ### Worked example — `F = 30, W = 5` (eager, no level barrier)
 
-`ceil(30/5) = 6` leaf partials ⇒ `reductionsRemaining` starts at `5`.
+`ceil(30/5) = 6` leaf partials ⇒ `leafTasksTotal = 6`, `reductionsRemaining` starts at `5`.
 
-| Time | Job status | Ready pool / counters | What the UI shows |
+| Time | Job status | Ready pool / counters | What the UI shows (`percent` = leaf progress) |
 |------|-----------|-----------------------|-------------------|
-| submit | `PENDING` | nothing queued; waiting room | `PENDING · 1st in line` |
-| admitted | `RUNNING` | 6 leaf tasks `QUEUED`; `reductionsRemaining=5` | `RUNNING · 0%` |
-| 5 leaves done | `RUNNING` | ready pool = 5 → claim 5, enqueue merge(5); 6th leaf still running | `RUNNING · ~0%` (no merge done yet) |
-| merge(5) done | `RUNNING` | `reductionsRemaining -= 4 → 1`; output + 6th leaf = 2 ready → merge(2) | `RUNNING · ~80%` |
-| merge(2) done | `COMPLETE` | `reductionsRemaining -= 1 → 0`; `result.csv` written, `count==30` ✓ | `COMPLETE · download` |
+| generating | `GENERATING` | inputs being written to S3 | `GENERATING · 0%` |
+| submit done | `PENDING` | nothing queued; waiting room | `PENDING · 1st in line · 0%` |
+| admitted | `RUNNING` | 6 leaf tasks `QUEUED`; `reductionsRemaining=5` | `RUNNING · 0%` (0/6 leaves) |
+| 5 leaves done | `RUNNING` | ready pool = 5 → claim 5, enqueue merge(5); 6th leaf still running | `RUNNING · ~83%` (5/6 leaves) |
+| 6th leaf + merge(5) done | `RUNNING` | all leaves done (`leafTasksDone=6`); `reductionsRemaining → 1`; 2 ready → merge(2) | `RUNNING · 100% leaf, 1 reduction left` |
+| merge(2) done | `COMPLETE` | `reductionsRemaining → 0`; `result.csv` written, `count==30` ✓ | `COMPLETE · download` |
 
-Note the 6th leaf and `merge(5)` run **concurrently** — no waiting for a level to drain.
+Note the 6th leaf and `merge(5)` run **concurrently** — no waiting for a level to drain. The leaf bar
+can reach 100% while a final merge or two is still in flight; `reductionsRemaining` is the field that
+confirms true completion (it reaching 0 is what flips the job to `COMPLETE`).
 
 ### Edge case — `F ≤ 5`
 

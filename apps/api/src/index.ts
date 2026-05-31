@@ -19,14 +19,15 @@ const generator = new GeneratorService({ s3 });
 const dispatcher = new DispatcherService({
   dynamo,
   queue,
-  generator,
   admissionFactorK: config.admissionFactorK
 });
 
 const app = createApp({
   jobs,
   fleet,
-  dispatcher
+  dispatcher,
+  generator,
+  s3
 });
 
 app.listen(config.apiPort, () => {

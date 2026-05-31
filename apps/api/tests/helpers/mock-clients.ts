@@ -1,6 +1,12 @@
 import type { JobStatus, MergeTask } from '@aggregate/shared';
 
-import type { DynamoPort, FleetRecord, JobRecord, RunningJobCounters } from '../../src/clients/dynamo.js';
+import type {
+  DynamoPort,
+  FleetRecord,
+  JobRecord,
+  RunningJobCounters,
+  TaskRecord
+} from '../../src/clients/dynamo.js';
 import type { S3Port } from '../../src/clients/s3.js';
 import type { SqsPort } from '../../src/clients/sqs.js';
 
@@ -22,19 +28,43 @@ export class MockDynamoStore implements DynamoPort {
     inFlight: 0
   };
 
-  public createPendingJob(input: { jobId: string; f: number; c: number; nowMs: number }): Promise<void> {
+  public createJob(input: {
+    jobId: string;
+    f: number;
+    c: number;
+    reuseSampleFile: boolean;
+    nowMs: number;
+  }): Promise<void> {
     this.jobs.set(input.jobId, {
       jobId: input.jobId,
-      status: 'PENDING',
+      status: 'GENERATING',
       submittedAt: input.nowMs,
       createdAt: input.nowMs,
       updatedAt: input.nowMs,
       F: input.f,
       C: input.c,
+      reuseSampleFile: input.reuseSampleFile,
       readyCount: 0,
       claimedCount: 0,
       leafTasksDone: 0
     });
+    return Promise.resolve();
+  }
+
+  public markGenerationComplete(jobId: string, nowMs: number): Promise<boolean> {
+    const row = this.jobs.get(jobId);
+    if (row === undefined || row.status !== 'GENERATING') {
+      return Promise.resolve(false);
+    }
+    this.jobs.set(jobId, { ...row, status: 'PENDING', updatedAt: nowMs });
+    return Promise.resolve(true);
+  }
+
+  public failJob(jobId: string, error: string, nowMs: number): Promise<void> {
+    const row = this.jobs.get(jobId);
+    if (row !== undefined) {
+      this.jobs.set(jobId, { ...row, status: 'FAILED', error: error.slice(0, 1000), updatedAt: nowMs });
+    }
     return Promise.resolve();
   }
 
@@ -55,15 +85,29 @@ export class MockDynamoStore implements DynamoPort {
     ).length);
   }
 
-  public deleteJob(jobId: string): Promise<void> {
-    this.jobs.delete(jobId);
-    return Promise.resolve();
-  }
-
-  public markJobRunning(jobId: string, counters: RunningJobCounters, nowMs: number): Promise<void> {
+  public cancelJob(jobId: string, nowMs: number): Promise<boolean> {
     const row = this.jobs.get(jobId);
     if (row === undefined) {
-      return Promise.resolve();
+      return Promise.resolve(false);
+    }
+    if (row.status !== 'GENERATING' && row.status !== 'PENDING' && row.status !== 'RUNNING') {
+      return Promise.resolve(false);
+    }
+    this.jobs.set(jobId, {
+      ...row,
+      status: 'CANCELLED',
+      updatedAt: nowMs
+    });
+    return Promise.resolve(true);
+  }
+
+  public markJobRunning(jobId: string, counters: RunningJobCounters, nowMs: number): Promise<boolean> {
+    const row = this.jobs.get(jobId);
+    if (row === undefined) {
+      return Promise.resolve(false);
+    }
+    if (row.status !== 'PENDING') {
+      return Promise.resolve(false);
     }
     this.jobs.set(jobId, {
       ...row,
@@ -76,7 +120,7 @@ export class MockDynamoStore implements DynamoPort {
       leafTasksDone: 0,
       updatedAt: nowMs
     });
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
 
   public getOldestPendingJob(): Promise<JobRecord | null> {
@@ -98,7 +142,29 @@ export class MockDynamoStore implements DynamoPort {
     return Promise.resolve();
   }
 
+  public listTasksForJob(jobId: string, limit: number = 300): Promise<TaskRecord[]> {
+    return Promise.resolve(
+      this.tasks
+        .filter((row) => row.jobId === jobId)
+        .slice(0, limit)
+        .map((row) => ({
+          ...row,
+          status: 'QUEUED',
+          attempts: 0
+        }))
+    );
+  }
+
+  public hasRunningJobs(): Promise<boolean> {
+    return Promise.resolve(Array.from(this.jobs.values()).some((row) => row.status === 'RUNNING'));
+  }
+
   public getFleet(): Promise<FleetRecord> {
+    return Promise.resolve(this.fleet);
+  }
+
+  public setFleetInFlight(inFlight: number): Promise<FleetRecord> {
+    this.fleet = { ...this.fleet, inFlight };
     return Promise.resolve(this.fleet);
   }
 
@@ -126,6 +192,14 @@ export class MockS3Store implements S3Port {
 
   public getSignedDownloadUrl(key: string): Promise<string> {
     return Promise.resolve(`https://example.local/${key}`);
+  }
+
+  public getObjectBytes(key: string): Promise<Uint8Array> {
+    const body = this.objects.get(key);
+    if (body === undefined) {
+      return Promise.reject(new Error(`NoSuchKey: ${key}`));
+    }
+    return Promise.resolve(body);
   }
 }
 

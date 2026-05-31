@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Optional, Protocol
 
 import numpy as np
 import numpy.typing as npt
@@ -73,7 +73,7 @@ class TaskStore(Protocol):
     def try_start(self, *, job_id: str, task_id: str) -> TaskTransitionResult:
         """Move task to IN_PROGRESS once; repeated deliveries return ALREADY_DONE."""
 
-    def mark_done(self, *, job_id: str, task_id: str, partial_key: str) -> None:
+    def mark_done(self, *, job_id: str, task_id: str, partial_key: Optional[str]) -> None:
         """Move task to DONE and record output partial key."""
 
     def mark_failed(self, *, job_id: str, task_id: str, error: str) -> None:

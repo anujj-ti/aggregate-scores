@@ -13,12 +13,11 @@ export const buildTestApp = () => {
   const dispatcher = new DispatcherService({
     dynamo,
     queue,
-    generator,
     admissionFactorK: 2
   });
   const jobs = new JobService({ dynamo, s3 });
   const fleet = new FleetService({ dynamo, maxWorkers: 10 });
-  const app = createApp({ jobs, fleet, dispatcher, dispatchOnSubmit: false });
+  const app = createApp({ jobs, fleet, dispatcher, generator, s3, dispatchOnSubmit: false });
   return { app, dynamo, s3, queue, dispatcher, jobs, fleet, generator };
 };
 

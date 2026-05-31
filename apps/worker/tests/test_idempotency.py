@@ -20,6 +20,7 @@ def test_redelivered_task_does_not_double_apply() -> None:
         leaf_tasks_done=0,
     )
     handler, blob, jobs, tasks, _queue, fleet = make_handler_stack(job=job)
+    fleet.total = 1
 
     payload = TaskPayload(
         job_id="job_retry",

@@ -3,12 +3,10 @@ import type { MergeTask } from '@aggregate/shared';
 
 import type { DynamoPort } from '../clients/dynamo.js';
 import type { SqsPort } from '../clients/sqs.js';
-import { GeneratorService } from './generator.js';
 
 type DispatcherDeps = {
   readonly dynamo: DynamoPort;
   readonly queue: SqsPort;
-  readonly generator: GeneratorService;
   readonly admissionFactorK: number;
 };
 
@@ -17,19 +15,20 @@ export class DispatcherService {
 
   private readonly queue: SqsPort;
 
-  private readonly generator: GeneratorService;
-
   private readonly admissionFactorK: number;
 
   public constructor(deps: DispatcherDeps) {
     this.dynamo = deps.dynamo;
     this.queue = deps.queue;
-    this.generator = deps.generator;
     this.admissionFactorK = deps.admissionFactorK;
   }
 
   public async runAdmissionCycle(): Promise<void> {
     let fleet = await this.dynamo.getFleet();
+    const hasRunningJobs = await this.dynamo.hasRunningJobs();
+    if (!hasRunningJobs && fleet.inFlight !== 0) {
+      fleet = await this.dynamo.setFleetInFlight(0);
+    }
     const targetInFlight = fleet.W * this.admissionFactorK;
 
     while (fleet.inFlight < targetInFlight) {
@@ -41,12 +40,12 @@ export class DispatcherService {
         return;
       }
 
-      await this.generator.generateFiles(pending.jobId, pending.F, pending.C);
-
+      // Input files were already written during the GENERATING phase, so admission only
+      // needs to flip the job to RUNNING and enqueue leaf tasks — no generation here.
       const leafTasksTotal = Math.ceil(pending.F / CHUNK_SIZE);
       const reductionsRemaining = leafTasksTotal - 1;
       const nowMs = Date.now();
-      await this.dynamo.markJobRunning(
+      const movedToRunning = await this.dynamo.markJobRunning(
         pending.jobId,
         {
           chunkSizeUsed: CHUNK_SIZE,
@@ -55,6 +54,9 @@ export class DispatcherService {
         },
         nowMs
       );
+      if (!movedToRunning) {
+        continue;
+      }
 
       for (let leafIdx = 0; leafIdx < leafTasksTotal; leafIdx += 1) {
         const start = leafIdx * CHUNK_SIZE;

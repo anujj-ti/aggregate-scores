@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from decimal import Decimal
-from typing import Protocol, cast
+from typing import Optional, Protocol, cast
 
 from botocore.exceptions import ClientError
 
 from worker.config import Settings
 from worker.models import JobState, ReadyPartial, TaskPayload, TaskTransitionResult
+
+
+class ReadyPoolConsistencyError(RuntimeError):
+    """Raised when a claimed seq range does not resolve the expected ready rows."""
 
 
 def _to_int(value: object, *, default: int = 0) -> int:
@@ -137,6 +141,17 @@ class DdbJobStore:
         ).get("Items", [])
         rows = cast(list[dict[str, object]], rows_obj)
 
+        # Fail-closed integrity guard. The conditional ADD above already reserved a
+        # disjoint seq range, so exactly `count` ready rows must exist for that range.
+        # A short count means a producer advanced readyCount before its ready row was
+        # durable (only possible with concurrent workers). Aborting here forces the job
+        # to FAILED instead of aggregating a partial set and reporting a wrong mean.
+        if len(rows) != count:
+            raise ReadyPoolConsistencyError(
+                f"claimed seq range [{start_seq},{end_seq}] for job {job_id} "
+                f"resolved {len(rows)} ready rows, expected {count}"
+            )
+
         return [
             ReadyPartial(
                 seq=_to_int(row["seq"]),
@@ -220,8 +235,17 @@ class DdbTaskStore:
                 return TaskTransitionResult.ALREADY_DONE
             raise
 
-    def mark_done(self, *, job_id: str, task_id: str, partial_key: str) -> None:
+    def mark_done(self, *, job_id: str, task_id: str, partial_key: Optional[str]) -> None:
         """Mark task done."""
+        if partial_key is None:
+            self._tasks.update_item(
+                Key={"jobId": job_id, "taskId": task_id},
+                UpdateExpression="SET #s = :done REMOVE partialKey",
+                ExpressionAttributeNames={"#s": "status"},
+                ExpressionAttributeValues={":done": "DONE"},
+            )
+            return
+
         self._tasks.update_item(
             Key={"jobId": job_id, "taskId": task_id},
             UpdateExpression="SET #s = :done, partialKey = :partial",

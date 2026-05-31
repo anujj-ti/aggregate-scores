@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import Protocol, cast
@@ -11,6 +12,8 @@ from pydantic import ValidationError
 
 from worker.contracts import MergeTask
 from worker.handler import WorkerHandler
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -50,7 +53,10 @@ class PollingWorker:
         """Run endless poll loop (or bounded iterations for local testing)."""
         iterations = 0
         while True:
-            self.run_once()
+            try:
+                self.run_once()
+            except Exception:  # pragma: no cover - defensive local runtime guard
+                LOGGER.exception("poll loop iteration failed")
             iterations += 1
             if max_iterations is not None and iterations >= max_iterations:
                 return
