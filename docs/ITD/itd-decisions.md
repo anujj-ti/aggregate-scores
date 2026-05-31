@@ -1,167 +1,141 @@
 # Distributed Mean - ITD Decisions
 
-This document captures key implementation tradeoff decisions (ITDs) in a concise interview-friendly format.
-Architecture details live in `../architecture/`.
+This document records implementation tradeoff decisions (ITDs) for interview discussion and design review.
+Architecture deep dives live in `../architecture/`.
 
 ## Decision Index
 
 | ITD | Decision |
 | :-- | :-- |
-| ITD 1 | Binary `.npy` for bulk vectors; CSV for final output |
-| ITD 2 | `(sum_vector, count)` in float64; divide once at end |
-| ITD 3 | Single recursive `merge` operation (no separate map/reduce codepaths) |
-| ITD 4 | Hard task input cap `<= 5`; scale via fleet width |
-| ITD 5 | One SQS work queue; Lambda event-source mapping consumes it |
+| ITD 1 | Binary `.npy` for inputs/partials; CSV for final result |
+| ITD 2 | `(sum_vector, count)` in float64; divide once at finalize |
+| ITD 3 | Single recursive `merge` operation (no separate map/reduce stage) |
+| ITD 4 | Hard task input cap `<= 5`; scale throughput by fleet width |
+| ITD 5 | One SQS work queue for admitted tasks |
 | ITD 6 | Capacity-based admission (`PENDING` waiting room + dispatcher) |
-| ITD 7 | Serverless-only compute (scale-to-zero) |
-| ITD 8 | Monorepo with 3 deployables (`web`, `api`, `worker`) + shared contracts |
-| ITD 9 | Pull-based scheduling (workers consume from queue), not push scheduler |
-| ITD 10 | Eager merge + reductions counter for completion (no level barrier) |
-| ITD 11 | DynamoDB for coordination state; S3 for bulk numeric artifacts |
-| ITD 12 | `PENDING` waiting room in DynamoDB, not a second queue |
-| ITD 13 | UI progress via polling, not WebSocket/SSE |
+| ITD 7 | Serverless-only compute path (scale-to-zero) |
+| ITD 8 | Monorepo with `web`, `api`, `worker` + shared contracts |
+| ITD 9 | Pull-based scheduling (workers consume queue) |
+| ITD 10 | Eager merge + `reductionsRemaining` completion (no level barrier) |
+| ITD 11 | DynamoDB control plane; S3 data plane |
+| ITD 12 | `PENDING` waiting room in DynamoDB (not a second queue) |
+| ITD 13 | UI progress via API polling (not WebSocket/SSE) |
 
 ---
 
 <table>
-  <tr>
-    <th colspan="2">ITD 1 - <em>Binary <code>.npy</code> for bulk data; CSV for final result</em></th>
-  </tr>
-  <tr><td><strong>THE PROBLEM</strong></td><td>Choose storage format for inputs, intermediate partials, and output.</td></tr>
-  <tr><td><strong>OPTIONS CONSIDERED (Decision in bold)</strong></td><td><strong>Float32 <code>.npy</code> inputs + float64 <code>.npy</code> partials + CSV result</strong> / CSV everywhere / Parquet / JSON</td></tr>
-  <tr><td><strong>REASONING</strong></td><td>Bulk I/O dominates cost and time; binary NumPy is fastest and smallest for this shape. Inputs are random in <code>[0,1]</code> so float32 is sufficient; partials must accumulate in float64 for accuracy. Output is tiny and human-readable, so CSV is best.</td></tr>
-  <tr><td><strong>TRADEOFFS</strong></td><td>Binary is less human-inspectable. We accept this and expose CSV where readability matters (final output).</td></tr>
-  <tr><td><strong>NOTES</strong></td><td><code>count</code> is tracked in state/counters, not embedded in every partial file payload.</td></tr>
+  <tr><th colspan="2">ITD 1 - <em>Binary <code>.npy</code> for bulk vectors; CSV for final output</em></th></tr>
+  <tr><td><strong>THE PROBLEM</strong></td><td>Choose storage formats for high-volume numeric artifacts vs operator-facing output.</td></tr>
+  <tr><td><strong>OPTIONS CONSIDERED</strong></td><td><ul><li><strong>Chosen:</strong> float32 <code>.npy</code> inputs, float64 <code>.npy</code> partials, CSV result</li><li>CSV for everything</li><li>Parquet/columnar formats</li><li>JSON payloads</li></ul></td></tr>
+  <tr><td><strong>REASONING</strong></td><td>NumPy binary is the fastest and smallest path for dense vectors. Final output is one tiny operator artifact, so CSV maximizes readability where it matters.</td></tr>
+  <tr><td><strong>TRADEOFFS</strong></td><td>Binary artifacts are not human-readable. We accept that for throughput and expose a human-readable final result.</td></tr>
+  <tr><td><strong>NOTES</strong></td><td>Vector blobs store numeric arrays; counts are tracked in coordination metadata/counters and task context, not as a human-facing output format.</td></tr>
 </table>
 
 <table>
-  <tr>
-    <th colspan="2">ITD 2 - <em>Compute distributed mean via <code>(sum, count)</code> monoid in float64</em></th>
-  </tr>
-  <tr><td><strong>THE PROBLEM</strong></td><td>Compute global mean across many files accurately and distributably.</td></tr>
-  <tr><td><strong>OPTIONS CONSIDERED (Decision in bold)</strong></td><td><strong><code>(sum_vector, count)</code> partials, divide once at end</strong> / Welford / integer scaling / average-of-averages</td></tr>
-  <tr><td><strong>REASONING</strong></td><td><code>(sum,count)</code> is associative (mergeable in any order), numerically safe at project scale, and simple to test. Final divide once avoids weighting bugs from chunk-local averaging.</td></tr>
-  <tr><td><strong>TRADEOFFS</strong></td><td>Float64 partials are larger than float32, but partial count is far smaller than input count.</td></tr>
-  <tr><td><strong>NOTES</strong></td><td>Kahan/compensated summation remains an optional future precision lever, not the baseline path.</td></tr>
+  <tr><th colspan="2">ITD 2 - <em>Distributed mean via <code>(sum_vector, count)</code> in float64</em></th></tr>
+  <tr><td><strong>THE PROBLEM</strong></td><td>Compute a global mean across many files with merge-order independence and stable precision.</td></tr>
+  <tr><td><strong>OPTIONS CONSIDERED</strong></td><td><ul><li><strong>Chosen:</strong> carry <code>(sum_vector, count)</code>; divide once at finalize</li><li>Average-of-averages</li><li>Welford-style online variance path</li><li>Scaled integer arithmetic</li></ul></td></tr>
+  <tr><td><strong>REASONING</strong></td><td>The pair is associative, so merges are valid in any grouping. Float64 accumulation keeps numeric drift low while preserving a simple correctness proof.</td></tr>
+  <tr><td><strong>TRADEOFFS</strong></td><td>Float64 partials are larger than float32, but partial volume is far lower than raw input volume.</td></tr>
+  <tr><td><strong>NOTES</strong></td><td>Finalize includes integrity check <code>count == F</code> before writing <code>result.csv</code>.</td></tr>
 </table>
 
 <table>
-  <tr>
-    <th colspan="2">ITD 3 - <em>Single recursive merge operation</em></th>
-  </tr>
-  <tr><td><strong>THE PROBLEM</strong></td><td>Whether to implement separate map/reduce stages or one unified operation.</td></tr>
-  <tr><td><strong>OPTIONS CONSIDERED (Decision in bold)</strong></td><td><strong>Single <code>merge</code> operation applied recursively</strong> / separate MAP and REDUCE implementations</td></tr>
-  <tr><td><strong>REASONING</strong></td><td>All stages perform the same algebra (<code>sum,count</code> combine). One operation reduces code surface, edge cases, and testing complexity.</td></tr>
-  <tr><td><strong>TRADEOFFS</strong></td><td>More explicit re-queue steps and intermediate artifacts, but cleaner correctness model.</td></tr>
-  <tr><td><strong>NOTES</strong></td><td>Terminology standardized on <strong>merge</strong>.</td></tr>
+  <tr><th colspan="2">ITD 3 - <em>Single recursive <code>merge</code> operation</em></th></tr>
+  <tr><td><strong>THE PROBLEM</strong></td><td>Decide whether to split logic into separate map/reduce stages or unify execution.</td></tr>
+  <tr><td><strong>OPTIONS CONSIDERED</strong></td><td><ul><li><strong>Chosen:</strong> one <code>merge</code> operation for leaf and merge tasks</li><li>Separate MAP and REDUCE implementations/states</li></ul></td></tr>
+  <tr><td><strong>REASONING</strong></td><td>Both stages apply the same algebra over <code>(sum,count)</code>. One operation reduces branching, status complexity, and test surface.</td></tr>
+  <tr><td><strong>TRADEOFFS</strong></td><td>Requires explicit task metadata to distinguish leaf vs merge inputs, but keeps correctness model uniform.</td></tr>
+  <tr><td><strong>NOTES</strong></td><td>No separate job status like <code>REDUCING</code>; job stays <code>RUNNING</code> until final merge completes.</td></tr>
 </table>
 
 <table>
-  <tr>
-    <th colspan="2">ITD 4 - <em>Cap every task at 5 inputs; scale by width</em></th>
-  </tr>
-  <tr><td><strong>THE PROBLEM</strong></td><td>How to respect RAM limits while still solving the distributed scheduling challenge.</td></tr>
-  <tr><td><strong>OPTIONS CONSIDERED (Decision in bold)</strong></td><td><strong>Per-task cap <code>&lt;=5</code> inputs</strong> / one-worker streaming over all files / larger unrestricted chunks</td></tr>
-  <tr><td><strong>REASONING</strong></td><td>The task evaluates distributed orchestration. Capping each task keeps memory bounded and enforces parallel decomposition; throughput comes from concurrent workers.</td></tr>
-  <tr><td><strong>TRADEOFFS</strong></td><td>More tasks and levels; accepted because parallel execution offsets orchestration overhead.</td></tr>
-  <tr><td><strong>NOTES</strong></td><td>Inside a task, inputs may still be streamed one-by-one to keep memory stable.</td></tr>
+  <tr><th colspan="2">ITD 4 - <em>Cap each task at <code>&lt;= 5</code> inputs; scale by width</em></th></tr>
+  <tr><td><strong>THE PROBLEM</strong></td><td>Bound per-task memory and runtime while preserving distributed scheduling behavior.</td></tr>
+  <tr><td><strong>OPTIONS CONSIDERED</strong></td><td><ul><li><strong>Chosen:</strong> hard chunk cap of 5 inputs per task</li><li>Larger/unbounded chunks</li><li>Single worker streaming all files</li></ul></td></tr>
+  <tr><td><strong>REASONING</strong></td><td>Small fixed chunks bound resource usage and force decomposition. Throughput scales by parallel workers, not oversized tasks.</td></tr>
+  <tr><td><strong>TRADEOFFS</strong></td><td>More task orchestration overhead and deeper reduction trees at high <code>F</code>.</td></tr>
+  <tr><td><strong>NOTES</strong></td><td><code>chunkSizeUsed</code> is snapshotted at admission and remains immutable for that job.</td></tr>
 </table>
 
 <table>
-  <tr>
-    <th colspan="2">ITD 5 - <em>Single SQS work queue consumed by Lambda mapping</em></th>
-  </tr>
-  <tr><td><strong>THE PROBLEM</strong></td><td>Design task flow queueing without introducing always-on pollers or complex priority machinery.</td></tr>
-  <tr><td><strong>OPTIONS CONSIDERED (Decision in bold)</strong></td><td><strong>One standard SQS queue (+ DLQ)</strong> / per-level queues / dual priority queues with custom poller</td></tr>
-  <tr><td><strong>REASONING</strong></td><td>Single queue is simplest and serverless-compatible. Multi-queue strict priority needs custom continuous polling, which conflicts with scale-to-zero constraints.</td></tr>
-  <tr><td><strong>TRADEOFFS</strong></td><td>No strict per-job task priority when jobs overlap; this is mitigated by admission policy (ITD 6).</td></tr>
-  <tr><td><strong>NOTES</strong></td><td>Continuation merge tasks are re-enqueued on the same queue.</td></tr>
+  <tr><th colspan="2">ITD 5 - <em>Single SQS work queue for admitted tasks</em></th></tr>
+  <tr><td><strong>THE PROBLEM</strong></td><td>Queue tasks simply without adding always-on custom schedulers.</td></tr>
+  <tr><td><strong>OPTIONS CONSIDERED</strong></td><td><ul><li><strong>Chosen:</strong> one standard SQS work queue (+ DLQ)</li><li>Per-level queues</li><li>Dual-priority queues with custom poller</li></ul></td></tr>
+  <tr><td><strong>REASONING</strong></td><td>A single queue aligns with Lambda event-source mapping and serverless operations. Priority behavior is handled at admission, not by queue complexity.</td></tr>
+  <tr><td><strong>TRADEOFFS</strong></td><td>No strict message-level priority across jobs in the queue.</td></tr>
+  <tr><td><strong>NOTES</strong></td><td>Only admitted tasks are enqueued; non-admitted jobs remain in <code>PENDING</code> in DynamoDB.</td></tr>
 </table>
 
 <table>
-  <tr>
-    <th colspan="2">ITD 6 - <em>Capacity-based admission via dispatcher; never reject submissions</em></th>
-  </tr>
-  <tr><td><strong>THE PROBLEM</strong></td><td>Prevent queue flooding/starvation while keeping utilization high and preserving acceptance semantics.</td></tr>
-  <tr><td><strong>OPTIONS CONSIDERED (Decision in bold)</strong></td><td><strong>Accept all as <code>PENDING</code>; dispatcher admits by task-capacity target</strong> / strict serialize one-job-at-a-time / fixed active-job count / no admission gate</td></tr>
-  <tr><td><strong>REASONING</strong></td><td>Task-based capacity signal adapts to job size; job-count gates are size-blind and inefficient. Every submission is accepted, but start time is capacity-governed.</td></tr>
-  <tr><td><strong>TRADEOFFS</strong></td><td>Adds dispatcher state machine and counters, but gives stable throughput under load.</td></tr>
-  <tr><td><strong>NOTES</strong></td><td>Dispatcher is triggered on submit, completion, and periodic sweeps.</td></tr>
+  <tr><th colspan="2">ITD 6 - <em>Capacity-based admission via dispatcher; accept-all submissions</em></th></tr>
+  <tr><td><strong>THE PROBLEM</strong></td><td>Prevent overload/starvation without rejecting user submissions.</td></tr>
+  <tr><td><strong>OPTIONS CONSIDERED</strong></td><td><ul><li><strong>Chosen:</strong> accept to <code>GENERATING/PENDING</code>, then admit by capacity</li><li>Reject when busy (hard backpressure)</li><li>Fixed active-job cap</li><li>No admission gate</li></ul></td></tr>
+  <tr><td><strong>REASONING</strong></td><td>Dispatcher admits oldest <code>PENDING</code> jobs while <code>inFlight &lt; k·W</code>. This preserves acceptance semantics, controls load, and adapts to job size better than job-count limits.</td></tr>
+  <tr><td><strong>TRADEOFFS</strong></td><td>Adds dispatcher and in-flight accounting complexity.</td></tr>
+  <tr><td><strong>NOTES</strong></td><td><code>PENDING</code> is a DynamoDB waiting room with queue-position visibility; jobs are never rejected for transient capacity.</td></tr>
 </table>
 
 <table>
-  <tr>
-    <th colspan="2">ITD 7 - <em>Serverless-only compute</em></th>
-  </tr>
-  <tr><td><strong>THE PROBLEM</strong></td><td>Meet scale-to-zero cost requirement while supporting bursty distributed jobs.</td></tr>
-  <tr><td><strong>OPTIONS CONSIDERED (Decision in bold)</strong></td><td><strong>Lambda + managed pay-per-use stores</strong> / always-on ECS/Fargate/EC2 workers</td></tr>
-  <tr><td><strong>REASONING</strong></td><td>Project requires zero-idle-billing posture. Lambda + S3 + SQS + DynamoDB satisfies this directly.</td></tr>
-  <tr><td><strong>TRADEOFFS</strong></td><td>Must design around Lambda runtime constraints and cold starts.</td></tr>
-  <tr><td><strong>NOTES</strong></td><td>No custom long-lived poller services.</td></tr>
+  <tr><th colspan="2">ITD 7 - <em>Serverless-only compute (scale-to-zero)</em></th></tr>
+  <tr><td><strong>THE PROBLEM</strong></td><td>Meet cost model requirements for bursty workloads with no idle baseline.</td></tr>
+  <tr><td><strong>OPTIONS CONSIDERED</strong></td><td><ul><li><strong>Chosen:</strong> Lambda + managed stores (SQS/S3/DynamoDB)</li><li>Always-on ECS/Fargate/EC2 scheduler-worker fleet</li></ul></td></tr>
+  <tr><td><strong>REASONING</strong></td><td>Scale-to-zero constraints favor event-driven compute and managed services. This avoids running a permanent scheduler/poller process.</td></tr>
+  <tr><td><strong>TRADEOFFS</strong></td><td>Must handle Lambda constraints (cold starts, timeout envelopes, at-least-once delivery).</td></tr>
+  <tr><td><strong>NOTES</strong></td><td>Architecture intentionally avoids any continuously running control-plane service.</td></tr>
 </table>
 
 <table>
-  <tr>
-    <th colspan="2">ITD 8 - <em>Monorepo with 3 deployables + shared contracts</em></th>
-  </tr>
-  <tr><td><strong>THE PROBLEM</strong></td><td>Organize multi-service code without contract drift across API/UI/worker.</td></tr>
-  <tr><td><strong>OPTIONS CONSIDERED (Decision in bold)</strong></td><td><strong>Monorepo (<code>web</code>, <code>api</code>, <code>worker</code>, shared package)</strong> / polyrepo / single mega-service</td></tr>
-  <tr><td><strong>REASONING</strong></td><td>One source of truth for schema/contracts and constants reduces integration drift. Deployables still scale independently.</td></tr>
-  <tr><td><strong>TRADEOFFS</strong></td><td>Needs workspace tooling and cross-language contract generation checks.</td></tr>
-  <tr><td><strong>NOTES</strong></td><td>API/infra use TypeScript shared package; worker consumes generated Pydantic contracts.</td></tr>
+  <tr><th colspan="2">ITD 8 - <em>Monorepo with 3 deployables + shared contracts</em></th></tr>
+  <tr><td><strong>THE PROBLEM</strong></td><td>Keep API/UI/worker contracts synchronized across languages and deployments.</td></tr>
+  <tr><td><strong>OPTIONS CONSIDERED</strong></td><td><ul><li><strong>Chosen:</strong> monorepo: <code>apps/web</code>, <code>apps/api</code>, <code>apps/worker</code>, shared schema package</li><li>Polyrepo split</li><li>Single service codebase</li></ul></td></tr>
+  <tr><td><strong>REASONING</strong></td><td>Shared schema source-of-truth minimizes drift and makes lifecycle/counter semantics consistent across stack boundaries.</td></tr>
+  <tr><td><strong>TRADEOFFS</strong></td><td>Requires disciplined workspace tooling and contract generation checks.</td></tr>
+  <tr><td><strong>NOTES</strong></td><td>TypeScript APIs and Python worker both consume generated/shared contract definitions.</td></tr>
 </table>
 
 <table>
-  <tr>
-    <th colspan="2">ITD 9 - <em>Pull-based balancing via queue consumption</em></th>
-  </tr>
-  <tr><td><strong>THE PROBLEM</strong></td><td>Keep workers utilized despite variable execution time per task.</td></tr>
-  <tr><td><strong>OPTIONS CONSIDERED (Decision in bold)</strong></td><td><strong>Pull next task when free</strong> / central push scheduler with explicit worker assignment</td></tr>
-  <tr><td><strong>REASONING</strong></td><td>Pull naturally balances heterogeneous worker speed and avoids central scheduling bottlenecks.</td></tr>
-  <tr><td><strong>TRADEOFFS</strong></td><td>Less explicit placement control, but tasks are stateless and uniform enough that this is acceptable.</td></tr>
-  <tr><td><strong>NOTES</strong></td><td>Implemented via SQS + Lambda event-source mapping behavior.</td></tr>
+  <tr><th colspan="2">ITD 9 - <em>Pull-based scheduling from queue consumption</em></th></tr>
+  <tr><td><strong>THE PROBLEM</strong></td><td>Balance variable-duration tasks without central per-worker assignment logic.</td></tr>
+  <tr><td><strong>OPTIONS CONSIDERED</strong></td><td><ul><li><strong>Chosen:</strong> workers pull next available task from SQS</li><li>Central push scheduler assigning specific workers</li></ul></td></tr>
+  <tr><td><strong>REASONING</strong></td><td>Pull naturally load-balances heterogeneous execution times and reduces scheduler bottlenecks.</td></tr>
+  <tr><td><strong>TRADEOFFS</strong></td><td>Less direct placement control and harder deterministic ordering.</td></tr>
+  <tr><td><strong>NOTES</strong></td><td>Implemented via Lambda event-source mapping over the single work queue.</td></tr>
 </table>
 
 <table>
-  <tr>
-    <th colspan="2">ITD 10 - <em>Eager merge with reductions counter; no level barriers</em></th>
-  </tr>
-  <tr><td><strong>THE PROBLEM</strong></td><td>Detect completion and schedule merges race-free under at-least-once delivery.</td></tr>
-  <tr><td><strong>OPTIONS CONSIDERED (Decision in bold)</strong></td><td><strong>Eager ready-pool claiming + <code>reductionsRemaining</code> counter</strong> / strict level barrier scheduling / S3-list polling model</td></tr>
-  <tr><td><strong>REASONING</strong></td><td>Counter-based completion is grouping-independent and race-safe with atomic updates. Workers merge immediately when useful: prefer full chunk of 5; only merge 2-4 at genuine tail when no more inputs can arrive.</td></tr>
-  <tr><td><strong>TRADEOFFS</strong></td><td>Requires additional counters and claim bookkeeping, but avoids idle barriers and polling loops.</td></tr>
-  <tr><td><strong>NOTES</strong></td><td>Readiness claim is conditional and disjoint, preventing duplicate merges of same partials.</td></tr>
+  <tr><th colspan="2">ITD 10 - <em>Eager merge + <code>reductionsRemaining</code>; no level barriers</em></th></tr>
+  <tr><td><strong>THE PROBLEM</strong></td><td>Advance reductions quickly and detect completion correctly under concurrent, at-least-once execution.</td></tr>
+  <tr><td><strong>OPTIONS CONSIDERED</strong></td><td><ul><li><strong>Chosen:</strong> eager merge from ready pool + atomic <code>reductionsRemaining</code></li><li>Strict level-by-level barriers</li><li>S3 listing/polling as reduction source-of-truth</li></ul></td></tr>
+  <tr><td><strong>REASONING</strong></td><td>At admission: <code>reductionsRemaining = leafTasksTotal - 1</code>. Each merge of <code>c</code> inputs atomically applies <code>-(c-1)</code>. Workers merge eagerly at 5-ready, and also at tail when <code>available &gt;= 2</code> and <code>available == reductionsRemaining + 1</code>, so no barrier idle time.</td></tr>
+  <tr><td><strong>TRADEOFFS</strong></td><td>Requires extra counters and conditional claim bookkeeping.</td></tr>
+  <tr><td><strong>NOTES</strong></td><td>Race safety depends on disjoint conditional claims (<code>claimedCount</code>) and idempotent task transitions so reductions are decremented exactly once per task completion.</td></tr>
 </table>
 
 <table>
-  <tr>
-    <th colspan="2">ITD 11 - <em>DynamoDB for control plane; S3 for data plane</em></th>
-  </tr>
-  <tr><td><strong>THE PROBLEM</strong></td><td>Choose storage split for fast atomic coordination and large vector artifacts.</td></tr>
-  <tr><td><strong>OPTIONS CONSIDERED (Decision in bold)</strong></td><td><strong>DynamoDB state + S3 vectors</strong> / RDBMS for all / store partial vectors in DynamoDB</td></tr>
-  <tr><td><strong>REASONING</strong></td><td>DynamoDB excels for conditional counters and status transitions; S3 is the right fit for large immutable numeric blobs.</td></tr>
-  <tr><td><strong>TRADEOFFS</strong></td><td>Two-store operational model, but each store is used for what it is best at.</td></tr>
-  <tr><td><strong>NOTES</strong></td><td>DynamoDB stores pointers/metadata/counters; S3 stores inputs, partials, outputs.</td></tr>
+  <tr><th colspan="2">ITD 11 - <em>DynamoDB for coordination; S3 for vector artifacts</em></th></tr>
+  <tr><td><strong>THE PROBLEM</strong></td><td>Choose storage roles for atomic control state vs large immutable numeric blobs.</td></tr>
+  <tr><td><strong>OPTIONS CONSIDERED</strong></td><td><ul><li><strong>Chosen:</strong> DynamoDB control plane + S3 data plane</li><li>Single RDBMS for state and blobs</li><li>Store partial vectors directly in DynamoDB</li></ul></td></tr>
+  <tr><td><strong>REASONING</strong></td><td>DynamoDB supports conditional writes and counters needed for admission/completion. S3 is the right fit for large object throughput and cost.</td></tr>
+  <tr><td><strong>TRADEOFFS</strong></td><td>Two-store operational model and cross-store observability correlation.</td></tr>
+  <tr><td><strong>NOTES</strong></td><td>DynamoDB stores statuses/counters/pointers; S3 stores inputs, partial arrays, and final <code>result.csv</code>.</td></tr>
 </table>
 
 <table>
-  <tr>
-    <th colspan="2">ITD 12 - <em><code>PENDING</code> waiting room in DynamoDB</em></th>
-  </tr>
-  <tr><td><strong>THE PROBLEM</strong></td><td>Where should accepted-but-not-admitted jobs wait while preserving ordering and observability?</td></tr>
-  <tr><td><strong>OPTIONS CONSIDERED (Decision in bold)</strong></td><td><strong>DynamoDB status + submittedAt index</strong> / second SQS pending queue / delay queue hacks</td></tr>
-  <tr><td><strong>REASONING</strong></td><td>Need oldest-first admission, direct cancellation, and queue-position visibility. DynamoDB query/index model supports all three cleanly.</td></tr>
-  <tr><td><strong>TRADEOFFS</strong></td><td>Admission is explicit dispatcher logic, not pure queue auto-flow.</td></tr>
-  <tr><td><strong>NOTES</strong></td><td>Only admitted tasks enter SQS work queue.</td></tr>
+  <tr><th colspan="2">ITD 12 - <em><code>PENDING</code> waiting room in DynamoDB (not a second queue)</em></th></tr>
+  <tr><td><strong>THE PROBLEM</strong></td><td>Hold accepted-but-not-admitted jobs with ordering, visibility, and cancellation support.</td></tr>
+  <tr><td><strong>OPTIONS CONSIDERED</strong></td><td><ul><li><strong>Chosen:</strong> DynamoDB <code>status=PENDING</code> + <code>submittedAt</code> index</li><li>Second SQS queue for pending jobs</li><li>Delay/retry queue hacks</li></ul></td></tr>
+  <tr><td><strong>REASONING</strong></td><td>Admission needs oldest-first scanning, queue position in UI, and clean pre-admission cancellation. DynamoDB supports these directly.</td></tr>
+  <tr><td><strong>TRADEOFFS</strong></td><td>Admission becomes explicit dispatcher logic instead of queue-native flow.</td></tr>
+  <tr><td><strong>NOTES</strong></td><td>State path is <code>GENERATING -&gt; PENDING -&gt; RUNNING</code>; only <code>RUNNING</code> jobs contribute tasks to SQS.</td></tr>
 </table>
 
 <table>
-  <tr>
-    <th colspan="2">ITD 13 - <em>Client polling for live UI state</em></th>
-  </tr>
-  <tr><td><strong>THE PROBLEM</strong></td><td>Expose near-live operational status in the dashboard with low complexity.</td></tr>
-  <tr><td><strong>OPTIONS CONSIDERED (Decision in bold)</strong></td><td><strong>Interval polling of API endpoints</strong> / WebSocket push / SSE push</td></tr>
-  <tr><td><strong>REASONING</strong></td><td>Workload runs in seconds-to-minutes; 1s polling is sufficient and simpler than persistent connection infrastructure.</td></tr>
-  <tr><td><strong>TRADEOFFS</strong></td><td>Polling adds repeated reads; accepted as low cost for this scale and complexity budget.</td></tr>
-  <tr><td><strong>NOTES</strong></td><td>Progress fields come from existing state counters; no extra event system required.</td></tr>
+  <tr><th colspan="2">ITD 13 - <em>Client polling for live UI status</em></th></tr>
+  <tr><td><strong>THE PROBLEM</strong></td><td>Expose near-live progress with low operational complexity.</td></tr>
+  <tr><td><strong>OPTIONS CONSIDERED</strong></td><td><ul><li><strong>Chosen:</strong> interval polling of job endpoints</li><li>WebSocket push</li><li>SSE push</li></ul></td></tr>
+  <tr><td><strong>REASONING</strong></td><td>Jobs run in seconds-to-minutes; polling gives adequate freshness from existing state fields (<code>status</code>, <code>percent</code>, <code>reductionsRemaining</code>, queue position) without persistent connection infrastructure.</td></tr>
+  <tr><td><strong>TRADEOFFS</strong></td><td>Repeated reads increase API/DynamoDB traffic compared to push.</td></tr>
+  <tr><td><strong>NOTES</strong></td><td>No additional event bus is required; UI derives progress from existing API views and counters.</td></tr>
 </table>
