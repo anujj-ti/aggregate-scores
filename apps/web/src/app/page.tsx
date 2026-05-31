@@ -5,6 +5,7 @@ import Link from "next/link";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import CircularProgress from "@mui/material/CircularProgress";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
@@ -27,6 +28,9 @@ export default function DashboardPage(): React.JSX.Element {
   const setWorkersMutation = useSetWorkers();
   const cancelJobMutation = useCancelJob();
   const [workersInput, setWorkersInput] = React.useState("5");
+  const [workersDirty, setWorkersDirty] = React.useState(false);
+  const [workersInputError, setWorkersInputError] = React.useState<string | null>(null);
+  const [workersAppliedNotice, setWorkersAppliedNotice] = React.useState(false);
   const [taskDoneHistory, setTaskDoneHistory] = React.useState<Array<{ atMs: number; done: number }>>([]);
   const jobs = jobsQuery.data ?? [];
   const queueHealth = deriveQueueHealthMetrics(jobs);
@@ -42,10 +46,22 @@ export default function DashboardPage(): React.JSX.Element {
     lastRefreshedAtMs > 0 ? new Date(lastRefreshedAtMs).toLocaleTimeString() : "Waiting for data...";
 
   React.useEffect(() => {
-    if (fleetQuery.data !== undefined) {
+    if (!workersDirty && !setWorkersMutation.isPending && fleetQuery.data !== undefined) {
       setWorkersInput(String(fleetQuery.data.W));
     }
-  }, [fleetQuery.data]);
+  }, [fleetQuery.data, workersDirty, setWorkersMutation.isPending]);
+
+  React.useEffect(() => {
+    if (!workersAppliedNotice) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setWorkersAppliedNotice(false);
+    }, 1500);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [workersAppliedNotice]);
 
   React.useEffect(() => {
     if (lastRefreshedAtMs <= 0) {
@@ -63,10 +79,15 @@ export default function DashboardPage(): React.JSX.Element {
 
   const submitWorkers = async (): Promise<void> => {
     const value = Number.parseInt(workersInput, 10);
-    if (Number.isNaN(value)) {
+    if (Number.isNaN(value) || value < 0) {
+      setWorkersInputError("Enter a non-negative integer.");
       return;
     }
-    await setWorkersMutation.mutateAsync(value);
+    setWorkersInputError(null);
+    const updated = await setWorkersMutation.mutateAsync(value);
+    setWorkersInput(String(updated.W));
+    setWorkersDirty(false);
+    setWorkersAppliedNotice(true);
   };
 
   return (
@@ -252,25 +273,51 @@ export default function DashboardPage(): React.JSX.Element {
             display: "flex",
             gap: 2,
             flexDirection: { xs: "column", md: "row" },
-            alignItems: { md: "center" },
+            alignItems: { md: "flex-start" },
           }}
         >
-          <Typography variant="subtitle1" sx={{ minWidth: 200 }}>
+          <Typography variant="subtitle1" sx={{ minWidth: 200, mt: { md: 1 } }}>
             Worker control (W)
           </Typography>
-          <TextField
-            value={workersInput}
-            onChange={(event) => setWorkersInput(event.target.value)}
-            type="number"
-            slotProps={{ htmlInput: { min: 0 } }}
-          />
-          <Button
-            variant="outlined"
-            onClick={() => void submitWorkers()}
-            disabled={setWorkersMutation.isPending}
-          >
-            Apply
-          </Button>
+          <Stack spacing={1.25} sx={{ flex: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              Current W: <strong>{fleetQuery.data?.W ?? "-"}</strong>
+            </Typography>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+              <TextField
+                label="New W"
+                value={workersInput}
+                onChange={(event) => {
+                  setWorkersInput(event.target.value);
+                  setWorkersDirty(true);
+                  setWorkersInputError(null);
+                  setWorkersAppliedNotice(false);
+                }}
+                type="number"
+                slotProps={{ htmlInput: { min: 0 } }}
+                error={workersInputError !== null}
+                helperText={workersInputError ?? "Set global worker capacity target."}
+                sx={{ minWidth: { sm: 220 } }}
+              />
+              <Button
+                variant="outlined"
+                onClick={() => void submitWorkers()}
+                disabled={
+                  setWorkersMutation.isPending ||
+                  !workersDirty ||
+                  fleetQuery.data === undefined ||
+                  workersInput.trim() === String(fleetQuery.data.W)
+                }
+                startIcon={setWorkersMutation.isPending ? <CircularProgress size={16} /> : undefined}
+              >
+                {setWorkersMutation.isPending ? "Applying..." : "Apply"}
+              </Button>
+            </Stack>
+            {setWorkersMutation.error !== null ? (
+              <Alert severity="error">{setWorkersMutation.error.message}</Alert>
+            ) : null}
+            {workersAppliedNotice ? <Alert severity="success">Worker capacity updated.</Alert> : null}
+          </Stack>
         </Box>
       </Paper>
 
