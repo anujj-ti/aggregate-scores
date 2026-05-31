@@ -226,7 +226,12 @@ export class JobService {
 
     const isTerminalStatus =
       record.status === 'COMPLETE' || record.status === 'FAILED' || record.status === 'CANCELLED';
-    if (isTerminalStatus && record.updatedAt !== undefined) {
+    if (
+      isTerminalStatus &&
+      record.updatedAt !== undefined &&
+      record.updatedAt > 0 &&
+      record.updatedAt >= record.submittedAt
+    ) {
       view.endedAt = record.updatedAt;
       view.durationMs = Math.max(0, record.updatedAt - record.submittedAt);
     }

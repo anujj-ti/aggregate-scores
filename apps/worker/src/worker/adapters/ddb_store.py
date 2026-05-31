@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from decimal import Decimal
+import time
 from typing import Optional, Protocol, cast
 
 from botocore.exceptions import ClientError
@@ -28,6 +29,10 @@ def _to_int(value: object, *, default: int = 0) -> int:
     raise TypeError(f"cannot convert value to int: {value!r}")
 
 
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
 class DdbJobStore:
     """Job/ready-pool coordination on DynamoDB."""
 
@@ -46,7 +51,7 @@ class DdbJobStore:
         response = self._jobs.update_item(
             Key={"jobId": job_id},
             UpdateExpression=expr,
-            ExpressionAttributeValues={":one": 1, ":now": 0},
+            ExpressionAttributeValues={":one": 1, ":now": _now_ms()},
             ReturnValues="UPDATED_NEW",
         )
         attrs = cast(dict[str, object], response["Attributes"])
@@ -77,7 +82,7 @@ class DdbJobStore:
         response = self._jobs.update_item(
             Key={"jobId": job_id},
             UpdateExpression="ADD reductionsRemaining :delta SET updatedAt = :now",
-            ExpressionAttributeValues={":delta": reductions_delta, ":now": 0},
+            ExpressionAttributeValues={":delta": reductions_delta, ":now": _now_ms()},
             ReturnValues="UPDATED_NEW",
         )
         attrs = cast(dict[str, object], response["Attributes"])
@@ -168,7 +173,7 @@ class DdbJobStore:
             Key={"jobId": job_id},
             UpdateExpression="SET #s = :status, resultKey = :result, updatedAt = :now",
             ExpressionAttributeNames={"#s": "status"},
-            ExpressionAttributeValues={":status": "COMPLETE", ":result": result_key, ":now": 0},
+            ExpressionAttributeValues={":status": "COMPLETE", ":result": result_key, ":now": _now_ms()},
         )
 
     def set_failed(self, *, job_id: str, error: str) -> None:
@@ -177,7 +182,7 @@ class DdbJobStore:
             Key={"jobId": job_id},
             UpdateExpression="SET #s = :status, #e = :error, updatedAt = :now",
             ExpressionAttributeNames={"#s": "status", "#e": "error"},
-            ExpressionAttributeValues={":status": "FAILED", ":error": error[:1000], ":now": 0},
+            ExpressionAttributeValues={":status": "FAILED", ":error": error[:1000], ":now": _now_ms()},
         )
 
 
