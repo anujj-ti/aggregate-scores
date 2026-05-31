@@ -1,0 +1,45 @@
+[project]
+name = "aggregate-worker"
+version = "0.1.0"
+description = "Python worker for distributed mean computation"
+requires-python = ">=3.11"
+dependencies = [
+  "boto3",
+  "numpy",
+  "pydantic>=2,<3",
+]
+
+[dependency-groups]
+dev = [
+  "black==25.1.0",
+  "datamodel-code-generator",
+  "mypy",
+  "pytest",
+  "ruff",
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/worker/contracts.py" = ["N815"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "src"
+warn_unused_configs = true
+show_error_codes = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

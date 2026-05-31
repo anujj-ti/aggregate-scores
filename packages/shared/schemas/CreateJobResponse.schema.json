@@ -1,0 +1,19 @@
+{
+  "$ref": "#/definitions/CreateJobResponse",
+  "definitions": {
+    "CreateJobResponse": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "jobId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

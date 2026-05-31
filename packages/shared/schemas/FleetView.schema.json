@@ -1,0 +1,28 @@
+{
+  "$ref": "#/definitions/FleetView",
+  "definitions": {
+    "FleetView": {
+      "type": "object",
+      "properties": {
+        "W": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inFlight": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "free": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "W",
+        "inFlight",
+        "free"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

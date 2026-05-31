@@ -44,8 +44,8 @@ stateDiagram-v2
 
 | From → To | Trigger | Who writes it | Side effects |
 |-----------|---------|---------------|--------------|
-| `(none)` → `PENDING` | `POST /jobs {F,C}` | **API** | Generate F input files to S3; write `Jobs` item (`status=PENDING`, `submittedAt`, `reductionsRemaining = ceil(F/5)-1`); return `202 Accepted`; ping dispatcher |
-| `PENDING` → `RUNNING` | Dispatcher sees `inFlight < k·W` and this is the oldest PENDING job | **Dispatcher** | Enqueue `ceil(F/5)` leaf tasks (chunks of ≤5 files); `ADD inFlight +<numTasks>` |
+| `(none)` → `PENDING` | `POST /jobs {F,C}` | **API** | Generate F input files to S3; write `Jobs` item (`status=PENDING`, `submittedAt`); return `202 Accepted`; ping dispatcher |
+| `PENDING` → `RUNNING` | Dispatcher sees `inFlight < k·W` and this is the oldest PENDING job | **Dispatcher** | Snapshot `chunkSizeUsed` for this job, compute `leafTasksTotal = ceil(F/chunkSizeUsed)` and `reductionsRemaining = leafTasksTotal - 1`, enqueue leaf tasks, `ADD inFlight +<numTasks>` |
 | `RUNNING` → `RUNNING` | A task produces a partial and the ready pool has ≥5 (or the tail) | **Worker** (that wins the conditional claim) | Claim ≤5 ready partials; enqueue one merge task; `ADD inFlight +1` |
 | `RUNNING` → `COMPLETE` | A merge drives `reductionsRemaining` to **0** (one partial left) | **Worker** (finalize) | `result.csv = sum_vector / count` (assert `count == F`); set `resultKey`; `ADD inFlight -…`; ping dispatcher (capacity freed) |
 | `RUNNING` → `FAILED` | A task exceeds `maxReceiveCount` (→ DLQ) or finalize count check fails | **Worker / DLQ handler** | Set `error`; release in-flight capacity; ping dispatcher |
@@ -116,6 +116,8 @@ flowchart LR
 - **`inFlight`** (in-flight task count) is the admission signal: the dispatcher keeps it near `k·W`.
 - The **ready pool** drives intra-job progression (every 5 ready partials spawn a merge), and
   **`reductionsRemaining`** detects the end (one partial left).
+- `W` can change mid-flight (capacity only), but each job's `chunkSizeUsed` snapshot is immutable,
+  so in-flight partition math and counters never shift during redeploy/config changes.
 
 ---
 

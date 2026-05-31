@@ -1,0 +1,34 @@
+{
+  "name": "aggregate-scores",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Distributed mean computation monorepo",
+  "packageManager": "pnpm@10.10.0",
+  "scripts": {
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format:check": "turbo run format:check",
+    "build:schemas": "turbo run build:schemas",
+    "gen:contracts": "turbo run gen:contracts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@typescript-eslint/eslint-plugin": "^8.32.0",
+    "@typescript-eslint/parser": "^8.32.0",
+    "@types/node": "^22.15.30",
+    "eslint": "^9.28.0",
+    "eslint-config-prettier": "^10.1.5",
+    "globals": "^16.2.0",
+    "prettier": "^3.5.3",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.2",
+    "turbo": "^2.5.3",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.32.0",
+    "vitest": "^3.1.4",
+    "zod": "^3.25.50",
+    "zod-to-json-schema": "^3.24.6"
+  }
+}

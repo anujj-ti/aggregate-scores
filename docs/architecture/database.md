@@ -61,8 +61,8 @@ the dashboard. Single-table is possible, but for clarity we use a few small tabl
 | `submittedAt` | number | epoch ms; dispatcher admits oldest first (GSI `status` + `submittedAt`) |
 | `F` | number | file count |
 | `C` | number | values per file |
-| `chunkSize` | number | default 5 |
-| `leafTasksTotal` | number | `ceil(F/5)` — number of leaf partials; set at admission |
+| `chunkSizeUsed` | number | immutable per-job partition size snapshot (default from `CHUNK_SIZE`) |
+| `leafTasksTotal` | number | `ceil(F/chunkSizeUsed)` — number of leaf partials; set at admission |
 | `leafTasksDone` | number | `ADD +1` per completed leaf; `== leafTasksTotal` ⇒ tail merges allowed |
 | `reductionsRemaining` | number | completion counter, init `leafTasksTotal - 1`; each c-input merge `ADD -(c-1)`; `0` ⇒ finalize (ITD 10) |
 | `readyCount` | number | total partials produced (leaf + merge output); each producer `ADD +1` to get its `seq` |
@@ -74,6 +74,10 @@ the dashboard. Single-table is possible, but for clarity we use a few small tabl
 Completion update — one grouping-free counter (a c-input merge performs `c-1` reductions; `0` ⇒ one partial left):
 
 ```
+
+> **Config snapshot rule:** `chunkSizeUsed` is frozen when the job is admitted and is the only
+> value used for that job's task partition math. Global config changes affect only new jobs. Runtime
+> `W` updates change throughput/capacity, not correctness counters.
 UpdateItem(jobId)
   UpdateExpression: "ADD reductionsRemaining :neg SET updatedAt = :now"
   ExpressionAttributeValues: { ":neg": -(c - 1), ":now": <ts> }
@@ -150,15 +154,15 @@ s3://aggregate-scores-{env}/
         │   ├── 1.npy
         │   └── ... (F files)
         ├── partials/
-        │   ├── 0.npz          # partial: { sum_vector: float64[C], count: int }, named by ready seq
-        │   ├── 1.npz          # leaf and merge outputs share one flat namespace
+        │   ├── 00000000.npz   # partial: { sum_vector: float64[C], count: int }, named by ready seq
+        │   ├── 00000001.npz   # leaf and merge outputs share one flat namespace
         │   └── ... 
         └── result.csv         # final C means (float64)
 ```
 
 - **Per-job namespacing** keeps concurrent jobs isolated. Partials live in one flat `partials/`
   prefix keyed by ready `seq` — no level prefixes, since merging is eager, not level-by-level.
-- Partial keys are deterministic (`{seq}.npz`), so a redelivered task overwrites idempotently. The
+- Partial keys are deterministic (`{seq:08d}.npz`), so a redelivered task overwrites idempotently. The
   `Ready` table maps `seq → key`, so a claimer fetches exactly the partials it claimed.
 - Each partial bundles **both** the `sum_vector` and its `count` in one `.npz`, so finalize can
   validate the accumulated `count` equals `F`.

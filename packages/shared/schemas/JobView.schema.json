@@ -1,0 +1,67 @@
+{
+  "$ref": "#/definitions/JobView",
+  "definitions": {
+    "JobView": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "PENDING",
+            "RUNNING",
+            "COMPLETE",
+            "FAILED"
+          ]
+        },
+        "F": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "C": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "submittedAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reductionsRemaining": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "queuePosition": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "resultUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "error": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "jobId",
+        "status",
+        "F",
+        "C",
+        "submittedAt",
+        "percent",
+        "reductionsRemaining"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

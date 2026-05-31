@@ -1,0 +1,52 @@
+{
+  "$ref": "#/definitions/MergeTask",
+  "definitions": {
+    "MergeTask": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inputKind": {
+          "type": "string",
+          "enum": [
+            "file",
+            "partial"
+          ]
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inputKeys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "maxItems": 5
+        },
+        "C": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "jobId",
+        "taskId",
+        "inputKind",
+        "level",
+        "inputKeys",
+        "C"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

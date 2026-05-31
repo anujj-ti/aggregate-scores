@@ -1,0 +1,37 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.11
+    hooks:
+      - id: ruff
+        args: [--fix]
+
+  - repo: https://github.com/psf/black
+    rev: 25.1.0
+    hooks:
+      - id: black
+
+  - repo: local
+    hooks:
+      - id: mypy-worker
+        name: mypy (worker strict)
+        entry: bash -lc 'cd apps/worker && uv run mypy --strict src tests'
+        language: system
+        pass_filenames: false
+
+      - id: prettier-check
+        name: prettier (check)
+        entry: pnpm prettier --check "**/*.{ts,tsx,js,mjs,cjs,json,yml,yaml}"
+        language: system
+        pass_filenames: false
+
+      - id: eslint-root
+        name: eslint
+        entry: pnpm eslint .
+        language: system
+        pass_filenames: false
+
+      - id: tsc-no-emit
+        name: tsc (no emit)
+        entry: pnpm -r exec tsc --noEmit
+        language: system
+        pass_filenames: false

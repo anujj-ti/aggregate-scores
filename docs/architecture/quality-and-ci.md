@@ -45,16 +45,17 @@ The shared contracts (`packages/shared`) are the source of truth. To keep the **
 **TS API/UI** from drifting:
 
 - TS side: `zod` schemas → `z.infer` types.
-- Python side: Pydantic models mirroring the same fields.
-- A CI step validates a set of example messages against **both** schemas, failing if they disagree.
+- Build step: `zod-to-json-schema` emits committed `packages/shared/schemas/*.json`.
+- Python side: `datamodel-code-generator` generates committed worker models from those JSON Schemas.
+- CI re-runs both generators and fails on `git diff --exit-code` if generated output changed.
 
 ## Pre-commit (fast local gate)
 
-`pre-commit` (or a `lefthook`/Husky hook) runs on staged files:
+`pre-commit` (or a `lefthook`/Husky hook) runs repository checks (not only changed files):
 
 ```text
 python: ruff --fix · black · mypy
-ts:     prettier --write · eslint --fix · tsc --noEmit
+ts:     prettier --check · eslint · tsc --noEmit
 ```
 
 ## CI pipeline (GitHub Actions)
@@ -67,7 +68,7 @@ flowchart LR
     PR --> L2[ts: tsc + eslint + prettier]
     PR --> T1[python: pytest]
     PR --> T2[ts: vitest]
-    PR --> C1[contract parity: zod vs pydantic]
+    PR --> C1[contracts: regenerate plus drift check]
     L1 & L2 & T1 & T2 & C1 --> G{all green?}
     G -->|yes| OK[mergeable]
     G -->|no| X[blocked]
@@ -77,7 +78,7 @@ flowchart LR
 .github/workflows/ci.yml
   ├─ job: python-quality   # uv sync → ruff check → black --check → mypy --strict → pytest
   ├─ job: ts-quality       # pnpm i → tsc --noEmit → eslint → prettier --check → vitest
-  └─ job: contracts        # validate example messages against zod + pydantic
+  └─ job: contracts        # rebuild JSON Schema + regenerate Pydantic + fail on drift
 ```
 
 > Turborepo caches TS task outputs so unchanged packages are skipped — keeps CI fast as the repo

@@ -1,0 +1,24 @@
+{
+  "$ref": "#/definitions/CreateJobRequest",
+  "definitions": {
+    "CreateJobRequest": {
+      "type": "object",
+      "properties": {
+        "F": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "C": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "F",
+        "C"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

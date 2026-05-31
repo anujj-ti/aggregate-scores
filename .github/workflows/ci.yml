@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  python-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Sync worker dependencies
+        run: uv sync --project apps/worker --frozen
+      - name: Ruff
+        run: uv run --project apps/worker ruff check apps/worker/src apps/worker/tests
+      - name: Black
+        run: uv run --project apps/worker black --check apps/worker/src apps/worker/tests
+      - name: Mypy
+        run: uv run --project apps/worker mypy --strict apps/worker/src apps/worker/tests
+      - name: Pytest
+        run: uv run --project apps/worker pytest apps/worker/tests
+
+  ts-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm -r exec tsc --noEmit
+      - name: ESLint
+        run: pnpm eslint .
+      - name: Prettier
+        run: pnpm prettier --check "**/*.{ts,tsx,js,mjs,cjs,json,yml,yaml}"
+      - name: Vitest
+        run: pnpm -r --if-present run test
+
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: astral-sh/setup-uv@v6
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Sync worker dependencies
+        run: uv sync --project apps/worker --frozen
+      - name: Rebuild JSON Schema
+        run: pnpm --filter @aggregate/shared run build:schemas
+      - name: Regenerate Pydantic contracts
+        run: uv run --project apps/worker python scripts/gen_contracts.py
+      - name: Fail on contract drift
+        run: git diff --exit-code

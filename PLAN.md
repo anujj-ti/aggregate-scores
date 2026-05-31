@@ -64,6 +64,7 @@ aggregate-scores/
 ## Phase 1 — Contracts & diagrams (lock the interfaces before coding)
 
 **Goal:** freeze the shapes everyone codes against, and produce the reference diagrams.
+**Detailed plan:** [`docs/plans/phase-1.md`](./docs/plans/phase-1.md).
 
 - [ ] `docs/diagrams/er-diagram.md` — the data model: `Jobs`, `Ready`, `Tasks`, `Fleet` (DynamoDB) + S3 prefixes, as a single `erDiagram` (consolidated from [database.md](./docs/architecture/database.md)).
 - [ ] `docs/diagrams/architecture.md` — the **final** AWS architecture: API GW → API Lambda, Dispatcher (EventBridge tick), SQS + DLQ, Worker Lambda (reserved concurrency = W), DynamoDB, S3, CloudFront/Next.js.

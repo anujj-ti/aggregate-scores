@@ -36,7 +36,7 @@ for key in task.inputKeys:               # <= 5 inputs (files or partials)
     acc += vec                           # fold in (float32 upcasts → no precision loss)
     count += c
     del vec                              # release before reading the next → peak stays ~2*C
-write_partial(f"jobs/{jobId}/partials/{seq}.npz", sum_vector=acc, count=count)
+write_partial(f"jobs/{jobId}/partials/{seq:08d}.npz", sum_vector=acc, count=count)
 ```
 
 The worker emits a **raw sum, never an average** (see the pitfall below). It **streams inputs one at
